@@ -4,7 +4,8 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '2.0.0';
+const PROGRAM_VERSION = 2;   // program.json with gym plans
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -111,7 +112,7 @@ async function syncNow(manual) {
   syncState.busy = true; syncState.err = ''; paintSync();
   const before = stable(D);
   try {
-    if (!P) await loadProgram();
+    if (!P || (P.version || 1) < PROGRAM_VERSION) await loadProgram();
     await syncFile(me(), true);
     await syncFile('shared', true);
     if (partner()) await syncFile(partner(), false);
@@ -159,17 +160,37 @@ function prep() {
   P._plans = Object.fromEntries(P.plans.map(p => [p.id, p]));
   P._sess = Object.fromEntries(P.sessions.map(s => [s.id, s]));
 }
-function setsFor(s) {
-  const out = [];
-  for (const pe of plan(s.plan_id).exercises) for (let n = 1; n <= pe.sets; n++) out.push({ id: `${s.id}-${pe.order}-S${n}`, pe, n });
+const isStr = s => s.type === 'Strength' || s.type === 'Bodyweight';
+const defTrack = who => val(who, 'settings', 'main', 'defaultTrack') || 'Home';
+const where = (who, s) => val(who, 'sessions', s.id, 'where') || defTrack(who);
+const COLL = t => t === 'Gym' ? 'gsets' : 'sets';
+const tIcon = t => t === 'Gym' ? '🏋️' : '🏠';
+const setId = (s, pe, n, t) => t === 'Gym' ? `${s.id}-G-${pe.order}-S${n}` : `${s.id}-${pe.order}-S${n}`;
+function setsFor(s, t = 'Home') {
+  const out = []; const pl = plan(t === 'Gym' ? s.gym_plan_id : s.plan_id); if (!pl) return out;
+  for (const pe of pl.exercises) for (let n = 1; n <= pe.sets; n++) out.push({ id: setId(s, pe, n, t), pe, n });
   return out;
 }
 const status = (who, sid) => val(who, 'sessions', sid, 'status');
 function chip(who, sid) {
-  const st = status(who, sid) || '—';
-  return `<span class="chip ${esc(st)} ${who === me() ? 'me' : ''}">${esc(cap(who))}: ${esc(st)}</span>`;
+  const st = status(who, sid) || '—'; const s = P._sess[sid];
+  return `<span class="chip ${esc(st)} ${who === me() ? 'me' : ''}">${s && isStr(s) ? tIcon(where(who, s)) + ' ' : ''}${esc(cap(who))}: ${esc(st)}</span>`;
 }
-function setsDone(who, s) { return setsFor(s).filter(x => val(who, 'sets', x.id, 'done')).length; }
+function setsDone(who, s, t = where(who, s)) { return setsFor(s, t).filter(x => val(who, COLL(t), x.id, 'done')).length; }
+function lastTime(who, exid, cur) {   // most recent earlier gym session where this exercise was logged
+  const idx = P.sessions.indexOf(cur);
+  for (let i = idx - 1; i >= 0; i--) {
+    const s = P.sessions[i]; if (!isStr(s)) continue;
+    let best = null;
+    for (const x of setsFor(s, 'Gym')) {
+      if (x.pe.exercise_id !== exid) continue;
+      const r = rec(who, 'gsets', x.id); if (!r || (r.weight == null && r.reps == null && r.secs == null)) continue;
+      if (!best || (r.weight ?? -1) > (best.weight ?? -1)) best = r;
+    }
+    if (best) return `${best.weight != null ? best.weight + ' lb' : 'BW'}${best.reps != null ? ' × ' + best.reps : best.secs != null ? ' × ' + best.secs + 's' : ''} <span class="sub">(Wk ${s.week} ${s.suggested_day})</span>`;
+  }
+  return null;
+}
 const restTxt = s => !s ? '0 (superset)' : (s >= 60 ? Math.floor(s / 60) + 'm' : '') + (s % 60 ? ' ' + (s % 60) + 's' : '');
 
 /* ---------------- views ---------------- */
@@ -196,7 +217,7 @@ function softRender() {
 
 function vSetup() {
   view().innerHTML = `<h1>Welcome 👋</h1>
-  <div class="card"><p>This app logs the MTB Fitness 12-week home programme for <b>Lynn</b> and <b>Jarom</b> and keeps both phones and the Excel tracker in sync through your private GitHub repo.</p>
+  <div class="card"><p>This app logs the MTB Fitness 12-week programme (home or gym) for <b>Lynn</b> and <b>Jarom</b> and keeps both phones and the Excel tracker in sync through your private GitHub repo.</p>
   <p class="sub">See <b>SETUP.md</b> in the MTB Fitness folder for the one-time steps (create the repo, run the PC sync with --init, make a token).</p>
   <a class="btn block" href="#settings">Set up this phone</a></div>`;
 }
@@ -205,12 +226,13 @@ function sessionCard(s, opts = {}) {
   const d = sessDate(s); const isT = d === todayISO();
   const href = s.type === 'HIIT' ? `#hiit/${s.id}` : `#session/${s.id}`;
   let extra = '';
-  if (s.type === 'Bodyweight') { const tot = setsFor(s).length; extra = `<span class="sub"> · ${setsDone(me(), s)}/${tot} sets</span>`; }
+  const mt = isStr(s) ? where(me(), s) : null;
+  if (mt) { const tot = setsFor(s, mt).length; extra = `<span class="sub"> · ${setsDone(me(), s)}/${tot} sets</span>`; }
   else { const iv = interval(s.week); extra = `<span class="sub"> · ${iv.reps}× ${iv.work_sec}s/${iv.rest_sec}s</span>`; }
   return `<a class="card sess ${isT ? 'today' : ''}" href="${href}">
     <div class="day d-${s.suggested_day}">${s.suggested_day}<small>${fmt(d, { month: 'numeric', day: 'numeric' })}</small></div>
-    <div class="grow"><h3>${s.type === 'HIIT' ? 'HIIT ' + s.n + ' · ' + esc(interval(s.week).focus) : 'Bodyweight ' + s.n + ' of 3'}</h3>
-    <div class="sub">${esc(s.type === 'HIIT' ? 'Gym bike / elliptical' : s.label)}${extra}</div>
+    <div class="grow"><h3>${s.type === 'HIIT' ? 'HIIT ' + s.n + ' · ' + esc(interval(s.week).focus) : tIcon(mt) + ' Strength ' + s.n + ' of 3'}</h3>
+    <div class="sub">${esc(s.type === 'HIIT' ? 'Gym bike / elliptical' : mt === 'Gym' ? s.gym_label : s.label)}${extra}</div>
     <div>${chip(me(), s.id)}${partner() ? chip(partner(), s.id) : ''}</div></div></a>`;
 }
 function vToday() {
@@ -245,31 +267,44 @@ function vWeek(a) {
      <a class="card sess" href="#rides"><div class="day d-Sun">Sun</div><div class="grow"><h3>MTB ride</h3><div class="sub">Log rides on the Rides tab</div></div></a>`;
 }
 
-/* ----- bodyweight session ----- */
+/* ----- strength session (home or gym) ----- */
 function vSession(id) {
   const s = P._sess[id]; if (!s) return vToday();
-  const pl = plan(s.plan_id); const pt = partner();
+  const t = where(me(), s), gym = t === 'Gym', coll = COLL(t);
+  const pl = plan(gym ? s.gym_plan_id : s.plan_id); const pt = partner(); const ptSame = pt && where(pt, s) === t;
   let html = `<a href="#week/${s.week}" class="sub">‹ Week ${s.week}</a>
-  <h1>Bodyweight ${s.n} of 3</h1><div class="sub">${esc(s.label)} · suggested ${fmt(sessDate(s))}</div>
+  <h1>Strength ${s.n} of 3</h1><div class="sub">${esc(gym ? s.gym_label : s.label)} · suggested ${fmt(sessDate(s))}</div>
+  <div class="seg mt"><button data-where="${id}|Home" class="${gym ? '' : 'on'}">🏠 Home</button><button data-where="${id}|Gym" class="${gym ? 'on' : ''}">🏋️ Gym</button></div>
+  ${pt && !ptSame ? `<div class="sub mt">${cap(pt)} is doing this one at ${where(pt, s) === 'Gym' ? 'the gym' : 'home'}.</div>` : ''}
   <div class="card grid2">
     <div><label class="f">Date done (shared)</label><input type="date" data-f="shared|sessions|${id}|dateDone" value="${esc(val('shared', 'sessions', id, 'dateDone') || '')}"></div>
     <div><label class="f">My status</label>${selectHtml(`${me()}|sessions|${id}|status`, P.status_options, status(me(), id))}</div>
   </div>`;
   for (const pe of pl.exercises) {
     const ex = exById(pe.exercise_id); const secs = pe.target_type === 'seconds';
-    html += `<div class="card ex"><h3><span class="sub">${pe.order}</span> <a href="${esc(ex.video_url)}" target="_blank" rel="noopener">${esc(ex.name)}</a></h3>
+    const nm = ex.video_url ? `<a href="${esc(ex.video_url)}" target="_blank" rel="noopener">${esc(ex.name)}</a>` : esc(ex.name);
+    html += `<div class="card ex"><h3><span class="sub">${pe.order}</span> ${nm}</h3>
       <div class="meta">${pe.sets} sets × <b>${esc(pe.target)}</b>${pe.per_side ? ' ' + esc(pe.per_side) : ''} · book rest ${restTxt(pe.rest_sec)}${ex.equipment !== 'Bodyweight' ? ' · ' + esc(ex.equipment) : ''}
-      ${secs ? `<button class="timerbtn" data-hold="${pe.target_max || 0}">⏱ ${pe.target_max ? pe.target_max + 's timer' : 'stopwatch'}</button>` : ''}</div>`;
+      ${pe.drop_set ? '<br><b>Triple drop set:</b> log the starting weight and first-drop reps' : ''}
+      ${secs && !pe.sprint ? `<button class="timerbtn" data-hold="${pe.target_max || 0}">⏱ ${pe.target_max ? pe.target_max + 's timer' : 'stopwatch'}</button>` : ''}</div>`;
+    if (gym) { const lt = lastTime(me(), pe.exercise_id, s); if (lt) html += `<div class="last">Last time: ${lt}</div>`; }
+    if (pe.sprint) {
+      const box = `sp-${id}-${pe.order}`; const rest = cfg.restSec || 60;
+      TCFG[box] = { reps: pe.sets, work: pe.target_max, rest, label: 'Sprint',
+        onWork: i => { const lid = setId(s, pe, i, 'Gym'); setVal(me(), 'gsets', lid, 'secs', pe.target_max); setVal(me(), 'gsets', lid, 'done', true); autoDate(id); markSet('gsets', lid); } };
+      html += `<div class="sub">${pe.sets} × ${pe.target_max}s all-out sprint, ${rest}s easy spin between (change in ⚙ rest timer).</div>` + timerBox(box, pe.sets, pe.target_max);
+    }
     for (let n = 1; n <= pe.sets; n++) {
-      const lid = `${id}-${pe.order}-S${n}`; const k = `${me()}|sets|${lid}`;
-      const done = !!val(me(), 'sets', lid, 'done');
-      html += `<div class="set"><div class="n">${n}</div>
-        <input inputmode="numeric" placeholder="${secs ? 'secs' : 'reps'}" data-f="${k}|${secs ? 'secs' : 'reps'}" data-num value="${esc(val(me(), 'sets', lid, secs ? 'secs' : 'reps') ?? '')}">
-        ${selectHtml(`${k}|band`, P.band_options, val(me(), 'sets', lid, 'band'), 'band')}
-        <button class="done ${done ? 'on' : ''}" data-done="${lid}" data-rest="${pe.rest_sec}">✓</button>`;
-      if (pt) {
-        const r = rec(pt, 'sets', lid);
-        if (r && (r.reps != null || r.secs != null || r.done || r.band)) html += `<div class="partner ${pt}">${cap(pt)}: ${r.reps ?? r.secs ?? '–'}${r.secs != null ? 's' : ''}${r.band ? ' · ' + esc(r.band) : ''}${r.done ? ' ✓' : ''}</div>`;
+      const lid = setId(s, pe, n, t); const k = `${me()}|${coll}|${lid}`; const r = rec(me(), coll, lid) || {};
+      const num = (f, ph) => `<input inputmode="${f === 'weight' ? 'decimal' : 'numeric'}" placeholder="${ph}" data-f="${k}|${f}" data-num value="${esc(r[f] ?? '')}">`;
+      let inputs;
+      if (gym) inputs = secs ? `<div class="span2">${num('secs', 'secs')}</div>` : num('weight', 'lb') + num('reps', 'reps');
+      else inputs = num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps') + selectHtml(`${k}|band`, P.band_options, r.band, 'band');
+      html += `<div class="set"><div class="n">${n}</div>${inputs}<button class="done ${r.done ? 'on' : ''}" data-done="${coll}|${lid}">✓</button>`;
+      if (ptSame) {
+        const q = rec(pt, coll, lid);
+        if (q && (q.reps != null || q.secs != null || q.done || q.band || q.weight != null))
+          html += `<div class="partner ${pt}">${cap(pt)}: ${q.weight != null ? q.weight + ' lb × ' : ''}${q.reps ?? (q.secs != null ? q.secs + 's' : '–')}${q.band ? ' · ' + esc(q.band) : ''}${q.done ? ' ✓' : ''}</div>`;
       }
       html += `</div>`;
     }
@@ -280,14 +315,14 @@ function vSession(id) {
     <div><label class="f">My RPE (1-10)</label>${selectHtml(`${me()}|sessions|${id}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'sessions', id, 'rpe'))}</div></div>
     <label class="f">Session notes (shared)</label><textarea data-f="shared|sessions|${id}|notes">${esc(val('shared', 'sessions', id, 'notes') || '')}</textarea>
     <button class="btn block" data-finish="${id}">Finish workout ✓</button></div>`;
-  view().innerHTML = html;
+  view().innerHTML = html; paintT();
 }
+function markSet(coll, lid) { const b = document.querySelector(`[data-done="${coll}|${lid}"]`); if (b) b.classList.add('on'); const i = document.querySelector(`[data-f="${me()}|${coll}|${lid}|secs"]`); if (i) i.value = val(me(), coll, lid, 'secs') ?? ''; }
 function selectHtml(key, opts, cur, ph) {
   return `<select data-f="${key}"><option value="">${ph || '–'}</option>${opts.map(o => `<option ${String(o) === String(cur ?? '') ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
 }
 
 /* ----- HIIT ----- */
-let H = null; // running interval timer
 function vHiit(id) {
   const s = P._sess[id]; if (!s) return vToday();
   const iv = interval(s.week); const k = `${me()}|hiit|${id}`; const v = f => esc(val(me(), 'hiit', id, f) ?? '');
@@ -296,9 +331,7 @@ function vHiit(id) {
   <h1>HIIT ${s.n} · ${esc(iv.focus)}</h1><div class="sub">Week ${s.week} · suggested ${fmt(sessDate(s))}</div>
   <div class="card"><b>${iv.reps} × ${iv.work_sec}s work / ${iv.rest_sec}s rest</b> · target ${esc(iv.target_rpm)} (bike)<div class="sub mt">${esc(iv.how_to)}</div>
   <div class="sub">On the elliptical, match the effort and track the resistance level.</div></div>
-  <div class="hiitbox" id="hbox"><div class="phase" id="hphase">READY</div><div class="big" id="htime">${clock(iv.work_sec)}</div>
-   <div class="center sub" id="hrep">Interval 0 of ${iv.reps}</div>
-   <div class="grid3 mt"><button class="btn" id="hstart">Start</button><button class="btn sec" id="hpause">Pause</button><button class="btn sec" id="hstop">Stop</button></div></div>
+  ${timerBox('hbox-' + id, iv.reps, iv.work_sec)}
   <div class="card">
    <div class="grid2"><div><label class="f">Date done (shared)</label><input type="date" data-f="shared|sessions|${id}|dateDone" value="${esc(val('shared', 'sessions', id, 'dateDone') || '')}"></div>
    <div><label class="f">My status</label>${selectHtml(`${me()}|sessions|${id}|status`, P.status_options, status(me(), id))}</div></div>
@@ -314,42 +347,63 @@ function vHiit(id) {
    <label class="f">Notes (shared)</label><textarea data-f="shared|hiit|${id}|notes">${esc(val('shared', 'hiit', id, 'notes') || '')}</textarea>
    ${pr ? `<div class="partner ${pt} mt">${cap(pt)}: ${esc(pr.machine || '')} ${pr.intervals != null ? pr.intervals + '/' + iv.reps + ' intervals' : ''} ${pr.avgHr ? '· avg HR ' + pr.avgHr : ''}</div>` : ''}
    <button class="btn block" data-finish="${id}">Finish HIIT ✓</button></div>`;
-  const st = $('#hstart'), pa = $('#hpause'), sp = $('#hstop');
-  st.onclick = () => hiitStart(id, iv); pa.onclick = () => { if (H) { H.paused = !H.paused; pa.textContent = H.paused ? 'Resume' : 'Pause'; } };
-  sp.onclick = () => hiitEnd(true);
-  if (H && H.id === id) paintHiit();
+  TCFG['hbox-' + id] = { reps: iv.reps, work: iv.work_sec, rest: iv.rest_sec,
+    onEnd: done => { const cur = val(me(), 'hiit', id, 'intervals'); if (done && (cur == null || cur < done)) setVal(me(), 'hiit', id, 'intervals', done); const c = $('#hcomp'); if (c) c.value = val(me(), 'hiit', id, 'intervals') ?? ''; } };
+  paintT();
 }
 const clock = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
-function hiitStart(id, iv) {
-  if (H && !H.done) return;
-  H = { id, iv, rep: 1, phase: 'WORK', left: iv.work_sec, paused: false, done: false, completed: 0 };
+
+/* ----- interval timer (HIIT + gym bike sprints) -----
+ * Clock-based: phases end at absolute times, so the timer stays correct even if the phone
+ * sleeps or the browser throttles it - when you come back it catches up to the right phase. */
+const TCFG = {};   // box id -> {reps, work, rest, onWork(i), onEnd(completed)}
+let T = null;
+function timerBox(box, reps, work) {
+  return `<div class="hiitbox" id="${box}"><div class="phase">READY</div><div class="big">${clock(work)}</div>
+   <div class="center sub rep">Interval 0 of ${reps}</div>
+   <div class="grid3 mt"><button class="btn" data-tstart="${box}">Start</button><button class="btn sec" data-tpause="${box}">Pause</button><button class="btn sec" data-tstop="${box}">Stop</button></div></div>`;
+}
+function startT(box) {
+  const c = TCFG[box]; if (!c) return;
+  if (T && !T.done) { if (T.box !== box) toast('Another timer is running'); return; }
+  T = { box, ...c, rep: 1, phase: 'WORK', end: Date.now() + c.work * 1000, paused: 0, done: false, completed: 0, lastBeep: -1 };
   beep(880, .25); vib(300); wake(true);
-  H.tick = setInterval(() => {
-    if (H.paused || H.done) return;
-    H.left -= 1;
-    if (H.left <= 3 && H.left > 0) beep(660, .08);
-    if (H.left <= 0) {
-      if (H.phase === 'WORK') { H.completed = H.rep; if (H.rep >= iv.reps) return hiitEnd(false); H.phase = 'REST'; H.left = iv.rest_sec; beep(440, .4); vib([200, 100, 200]); }
-      else { H.rep++; H.phase = 'WORK'; H.left = iv.work_sec; beep(880, .4); vib(400); }
-    }
-    paintHiit();
-  }, 1000);
-  paintHiit();
+  T.iv = setInterval(tickT, 200); paintT();
 }
-function hiitEnd(stopped) {
-  if (!H) return; clearInterval(H.tick); H.done = true; H.phase = stopped ? 'STOPPED' : 'DONE'; wake(false);
+function tickT() {
+  if (!T || T.done || T.paused) return;
+  while (Date.now() >= T.end && !T.done) {
+    if (T.phase === 'WORK') {
+      T.completed = T.rep; T.onWork?.(T.rep);
+      if (T.rep >= T.reps) { endT(false); return; }
+      T.phase = 'REST'; T.end += T.rest * 1000; beep(440, .4); vib([200, 100, 200]);
+    } else { T.rep++; T.phase = 'WORK'; T.end += T.work * 1000; beep(880, .4); vib(400); }
+    T.lastBeep = -1;
+  }
+  const sec = Math.ceil((T.end - Date.now()) / 1000);
+  if (sec <= 3 && sec > 0 && sec !== T.lastBeep) { T.lastBeep = sec; beep(660, .08); }
+  paintT();
+}
+function pauseT(box) {
+  if (!T || T.done || T.box !== box) return;
+  if (T.paused) { T.end = Date.now() + T.paused; T.paused = 0; } else T.paused = Math.max(1, T.end - Date.now());
+  paintT();
+}
+function endT(stopped) {
+  if (!T || T.done) return; clearInterval(T.iv); T.done = true; T.phase = stopped ? 'STOPPED' : 'DONE'; wake(false);
   if (!stopped) { beep(1000, .6); vib([300, 100, 300, 100, 600]); }
-  const cur = val(me(), 'hiit', H.id, 'intervals');
-  if (H.completed && (cur == null || cur < H.completed)) setVal(me(), 'hiit', H.id, 'intervals', H.completed);
-  paintHiit(); const c = $('#hcomp'); if (c) c.value = val(me(), 'hiit', H.id, 'intervals') ?? '';
+  T.onEnd?.(T.completed); paintT();
 }
-function paintHiit() {
-  const box = $('#hbox'); if (!box || !H) return;
-  box.className = 'hiitbox ' + H.phase; $('#hphase').className = 'phase ' + H.phase;
-  $('#hphase').textContent = H.phase === 'DONE' ? 'DONE 🎉' : H.phase;
-  $('#htime').textContent = clock(H.done ? 0 : H.left);
-  $('#hrep').textContent = `Interval ${H.done ? H.completed : H.rep} of ${H.iv.reps}`;
+function paintT() {
+  if (!T) return; const box = document.getElementById(T.box); if (!box) return;
+  const left = T.done ? 0 : T.paused ? T.paused / 1000 : (T.end - Date.now()) / 1000;
+  box.className = 'hiitbox ' + T.phase;
+  const ph = box.querySelector('.phase'); ph.className = 'phase ' + T.phase; ph.textContent = T.phase === 'DONE' ? 'DONE 🎉' : T.paused ? 'PAUSED' : T.phase;
+  box.querySelector('.big').textContent = clock(left);
+  box.querySelector('.rep').textContent = `Interval ${T.done ? T.completed : T.rep} of ${T.reps}`;
+  box.querySelector('[data-tpause]').textContent = T.paused ? 'Resume' : 'Pause';
 }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tickT(); });
 
 /* ----- stretches ----- */
 function vStretch(d) {
@@ -395,8 +449,8 @@ function vRide(id) {
 /* ----- progress ----- */
 function weekStats(who, w) {
   const ss = P.sessions.filter(s => s.week === w);
-  const bw = ss.filter(s => s.type === 'Bodyweight'), hi = ss.filter(s => s.type === 'HIIT');
-  const planned = bw.reduce((a, s) => a + setsFor(s).length, 0), done = bw.reduce((a, s) => a + setsDone(who, s), 0);
+  const bw = ss.filter(isStr), hi = ss.filter(s => s.type === 'HIIT');
+  const planned = bw.reduce((a, s) => a + setsFor(s, where(who, s)).length, 0), done = bw.reduce((a, s) => a + setsDone(who, s), 0);
   let st = 0; for (let i = 0; i < 7; i++) { const d = iso(addDays(parseISO(weekStart(w)), i)); if ((val(who, 'stretch', d, 's') || []).filter(Boolean).length === 9) st++; }
   const rideN = rides().filter(([, r]) => { const dd = Math.floor((parseISO(r.date) - parseISO(weekStart(w))) / 864e5); return dd >= 0 && dd < 7 && (r.rider === 'Both' || (r.rider || '').toLowerCase() === who); }).length;
   return { bw: bw.filter(s => status(who, s.id) === 'Done').length, hi: hi.filter(s => status(who, s.id) === 'Done').length, pct: planned ? Math.round(done / planned * 100) : 0, st, rides: rideN };
@@ -404,8 +458,8 @@ function weekStats(who, w) {
 function vProgress() {
   const ws = [...Array(12)].map((_, i) => i + 1); const pt = partner();
   const cell = (v, full, cls) => `<td class="${cls} ${v >= full ? 'full' : ''}">${v}</td>`;
-  view().innerHTML = `<h1>Progress</h1><div class="sub">Bodyweight /3 · HIIT /2 · sets % · stretch days /7 · rides. <span style="color:var(--acc2)">${cap(me())}</span>${pt ? ` vs <span style="color:var(--jarom)">${cap(pt)}</span>` : ''}</div>
-  <div class="card"><table class="prog"><tr><th>Wk</th><th>BW</th><th>HIIT</th><th>Sets</th><th>Str</th><th>Ride</th>${pt ? '<th>BW</th><th>HIIT</th><th>Sets</th><th>Str</th><th>Ride</th>' : ''}</tr>
+  view().innerHTML = `<h1>Progress</h1><div class="sub">Strength /3 · HIIT /2 · sets % · stretch days /7 · rides. <span style="color:var(--acc2)">${cap(me())}</span>${pt ? ` vs <span style="color:var(--jarom)">${cap(pt)}</span>` : ''}</div>
+  <div class="card"><table class="prog"><tr><th>Wk</th><th>Str</th><th>HIIT</th><th>Sets</th><th>🧘</th><th>Ride</th>${pt ? '<th>Str</th><th>HIIT</th><th>Sets</th><th>🧘</th><th>Ride</th>' : ''}</tr>
   ${ws.map(w => { const a = weekStats(me(), w), b = pt && weekStats(pt, w);
     return `<tr><td><a href="#week/${w}">${w}</a></td>${cell(a.bw, 3, 'me')}${cell(a.hi, 2, 'me')}${cell(a.pct, 100, 'me')}${cell(a.st, 7, 'me')}${cell(a.rides, 99, 'me')}
     ${b ? cell(b.bw, 3, 'pt') + cell(b.hi, 2, 'pt') + cell(b.pct, 100, 'pt') + cell(b.st, 7, 'pt') + cell(b.rides, 99, 'pt') : ''}</tr>`; }).join('')}</table></div>`;
@@ -415,6 +469,8 @@ function vProgress() {
 function vSettings() {
   view().innerHTML = `<h1>Settings</h1><div class="card">
    <label class="f">Who is using this phone?</label><select id="sMe"><option value="">Choose…</option>${['lynn', 'jarom'].map(p => `<option value="${p}" ${cfg.me === p ? 'selected' : ''}>${cap(p)}</option>`).join('')}</select>
+   <label class="f">My default track for strength sessions</label><select id="sTrack">${['Home', 'Gym'].map(x => `<option ${(cfg.me ? defTrack(cfg.me) : 'Home') === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+   <div class="sub">You can still switch Home/Gym on any session.</div>
    <label class="f">GitHub username (repo owner)</label><input id="sOwner" autocapitalize="off" autocorrect="off" value="${esc(cfg.owner)}">
    <label class="f">Private data repo name</label><input id="sRepo" autocapitalize="off" autocorrect="off" value="${esc(cfg.repo)}">
    <label class="f">GitHub token (fine-grained, Contents: read & write on that repo only)</label><input id="sTok" type="password" autocomplete="off" value="${esc(cfg.token)}">
@@ -431,6 +487,7 @@ function vSettings() {
     cfg = { ...cfg, me: $('#sMe').value, owner: $('#sOwner').value.trim(), repo: $('#sRepo').value.trim(), token: $('#sTok').value.trim(), api: ($('#sApi').value.trim() || 'https://api.github.com'), restSec: +$('#sRest').value || 60 };
     LS.set('cfg', cfg);
     if (!configured()) return toast('Fill in all fields');
+    if (defTrack(cfg.me) !== $('#sTrack').value || !val(cfg.me, 'settings', 'main', 'defaultTrack')) setVal(cfg.me, 'settings', 'main', 'defaultTrack', $('#sTrack').value);
     try { await loadProgram(); prep(); await syncNow(true); location.hash = '#today'; render(); } catch (e) { toast(e.message); syncState.err = e.message; paintSync(); }
   };
   $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Programme reloaded'); render(); } catch (e) { toast(e.message); } };
@@ -446,15 +503,20 @@ document.addEventListener('change', e => {
   if (el.hasAttribute('data-num') && v !== '') { const n = Number(v.replace(',', '.')); v = isNaN(n) ? v : n; }
   if (field === 'rpe' && v !== '') v = Number(v);
   setVal(file_, coll, key, field, v === '' ? null : v);
-  if (coll === 'sets' && v !== '' && v !== null && field !== 'band') autoDate(key.split('-').slice(0, 2).join('-'));
+  if ((coll === 'sets' || coll === 'gsets') && v !== '' && v !== null && field !== 'band') autoDate(key.split('-').slice(0, 2).join('-'));
   if (field === 'status' && v === 'Done') autoDate(key);
 });
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t) return;
   if (t.dataset.done) {
-    const lid = t.dataset.done; const on = !val(me(), 'sets', lid, 'done');
-    setVal(me(), 'sets', lid, 'done', on ? true : null); t.classList.toggle('on', on);
+    const [coll, lid] = t.dataset.done.split('|'); const on = !val(me(), coll, lid, 'done');
+    setVal(me(), coll, lid, 'done', on ? true : null); t.classList.toggle('on', on);
     if (on) { autoDate(lid.split('-').slice(0, 2).join('-')); startRest(cfg.restSec || 60); vib(40); }
+  } else if (t.dataset.where) {
+    const [sid, tr] = t.dataset.where.split('|'); setVal(me(), 'sessions', sid, 'where', tr); render();
+  } else if (t.dataset.tstart) { startT(t.dataset.tstart);
+  } else if (t.dataset.tpause) { pauseT(t.dataset.tpause);
+  } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop) endT(true);
   } else if (t.dataset.finish) {
     const id = t.dataset.finish; setVal(me(), 'sessions', id, 'status', 'Done'); autoDate(id); toast('Nice work! 💪'); location.hash = '#today';
   } else if (t.dataset.stretch) {

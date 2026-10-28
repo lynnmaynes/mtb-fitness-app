@@ -80,3 +80,9 @@ td.me{color:var(--acc2)}td.pt{color:var(--jarom)}
 .center{text-align:center}
 .mt{margin-top:12px}
 .right{float:right}
+.seg{display:flex;background:#111113;border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{flex:1;background:none;border:0;color:var(--mute);font-size:16px;font-weight:700;padding:10px;border-radius:9px}
+.seg button.on{background:var(--acc);color:#fff}
+.last{font-size:13px;color:var(--ok);margin:-2px 0 8px}
+.span2{grid-column:span 2}
+.span2 input{width:100%}
