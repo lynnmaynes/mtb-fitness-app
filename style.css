@@ -11,6 +11,8 @@ header#top{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:
   padding-top:calc(10px + env(safe-area-inset-top));background:#1b1b1d;border-bottom:1px solid var(--line)}
 .brand{font-weight:800;font-size:20px;color:var(--txt);text-decoration:none;letter-spacing:.5px}
 .brand span{color:var(--acc)}
+.brand{display:flex;align-items:center;gap:6px}
+.brand img{height:30px;width:auto}
 #weekInfo{flex:1;font-size:13px;color:var(--mute);line-height:1.2;min-width:0}
 #weekInfo b{color:var(--txt)}
 .sync{display:flex;align-items:center;gap:6px;background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:18px;padding:6px 10px;font-size:13px}
