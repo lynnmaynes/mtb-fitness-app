@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 const PROGRAM_VERSION = 2;   // program.json with gym plans
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -206,7 +206,7 @@ const view = () => $('#view');
 function header() {
   if (!P) { $('#weekInfo').innerHTML = ''; return; }
   const w = curWeek(); const s = P.sessions.find(x => x.week === clampW(w));
-  $('#weekInfo').innerHTML = w === 0 ? `Starts <b>${fmt(startISO())}</b><br>${cap(me())}` :
+  $('#weekInfo').innerHTML = w === 0 ? `<b>${cap(me())}</b>` :
     w > 12 ? `<b>Programme complete</b><br>${cap(me())}` : `<b>Week ${w}</b> · ${esc(s.phase)}<br>${esc(s.block)} · ${cap(me())}`;
 }
 function render() {
@@ -253,7 +253,7 @@ function vToday() {
   if (todays.length) html += `<h2>Today's workout</h2>` + todays.map(s => sessionCard(s)).join('');
   else if (w >= 1 && w <= 12) html += `<div class="card"><h3>${dow === 'Thu' ? 'Rest day 😴' : dow === 'Sun' ? 'MTB ride day 🚵' : 'No session scheduled'}</h3><div class="sub">${dow === 'Sun' ? '<a href="#ride/new">Log a ride</a>' : 'Catch up on a missed session from this week if needed.'}</div></div>`;
   // stretches today
-  const sd = (w >= 1 && w <= 12) ? t : startISO();
+  const sd = t;
   html += `<h2>Daily stretches</h2>${stretchSummary(sd)}`;
   const wk = clampW(w || 1);
   html += `<h2>Week ${wk}</h2>` + P.sessions.filter(s => s.week === wk && !todays.includes(s)).map(s => sessionCard(s)).join('');
@@ -416,13 +416,13 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 /* ----- stretches ----- */
 function vStretch(d) {
   const w = curWeek();
-  d = d || ((w >= 1 && w <= 12) ? todayISO() : startISO());
+  d = d || todayISO();   // stretches are logged on the day you actually do them
   const arr = val(me(), 'stretch', d, 's') || Array(9).fill(false);
   const parr = partner() ? (val(partner(), 'stretch', d, 's') || []) : [];
   const ids = P.stretches.exercise_ids;
   view().innerHTML = `<div class="row"><a class="btn sec small" href="#stretch/${iso(addDays(parseISO(d), -1))}">‹</a>
-   <div class="grow center"><h1>Stretches</h1><div class="sub">${fmt(d, { weekday: 'long', month: 'short', day: 'numeric' })}</div></div>
-   <a class="btn sec small" href="#stretch/${iso(addDays(parseISO(d), 1))}">›</a></div>
+   <div class="grow center"><h1>Stretches</h1><div class="sub">${d === todayISO() ? 'Today · ' : ''}${fmt(d, { weekday: 'long', month: 'short', day: 'numeric' })}${d !== todayISO() ? ` · <a href="#stretch/${todayISO()}">Back to today</a>` : ''}</div></div>
+   <a class="btn sec small" href="#stretch/${iso(addDays(parseISO(d), 1))}" ${d >= todayISO() ? 'style="visibility:hidden"' : ''}>›</a></div>
    <div class="card">${ids.map((id, i) => `<div class="stretch"><a href="${esc(exById(id).video_url)}" target="_blank" rel="noopener">${esc(P.stretches.names[i])}<div class="sub">1 × 10${parr[i] ? ` · <span style="color:var(--jarom)">${cap(partner())} ✓</span>` : ''}</div></a>
      <button class="done ${arr[i] ? 'on' : ''}" style="width:52px" data-stretch="${d}|${i}">✓</button></div>`).join('')}
    <button class="btn block sec" data-stretchall="${d}">Mark all 9 done</button>
