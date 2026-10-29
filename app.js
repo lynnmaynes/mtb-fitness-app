@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const PROGRAM_VERSION = 2;   // program.json with gym plans
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -251,7 +251,8 @@ function vToday() {
   if (w === 0) html += `<div class="card">Programme starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.</div>`;
   if (w > 12) html += `<div class="card">🎉 12 weeks done. Check <a href="#progress">Progress</a>.</div>`;
   if (todays.length) html += `<h2>Today's workout</h2>` + todays.map(s => sessionCard(s)).join('');
-  else if (w >= 1 && w <= 12) html += `<div class="card"><h3>${dow === 'Thu' ? 'Rest day 😴' : dow === 'Sun' ? 'MTB ride day 🚵' : 'No session scheduled'}</h3><div class="sub">${dow === 'Sun' ? '<a href="#ride/new">Log a ride</a>' : 'Catch up on a missed session from this week if needed.'}</div></div>`;
+  else if (w >= 1 && w <= 12) html += `<div class="card"><h3>${dow === 'Thu' || dow === 'Sun' ? 'Rest day 😴' : 'No session scheduled'}</h3><div class="sub">Catch up on a missed session from this week if needed.</div></div>`;
+  if (dow === 'Sat' && w >= 1 && w <= 12) html += rideCard(t);   // Saturday = MTB ride day (plus Strength 3)
   // stretches today
   const sd = t;
   html += `<h2>Daily stretches</h2>${stretchSummary(sd)}`;
@@ -270,9 +271,16 @@ function vWeek(a) {
   view().innerHTML = `<div class="row"><a class="btn sec small" href="#week/${w - 1}" ${w <= 1 ? 'style="visibility:hidden"' : ''}>‹</a>
     <div class="grow center"><h1>Week ${w}</h1><div class="sub">${fmt(weekStart(w))} – ${fmt(iso(addDays(parseISO(weekStart(w)), 6)))} · ${esc(s0.phase)} · ${esc(s0.block)}</div></div>
     <a class="btn sec small" href="#week/${w + 1}" ${w >= 12 ? 'style="visibility:hidden"' : ''}>›</a></div>` +
-    P.sessions.filter(s => s.week === w).map(s => sessionCard(s)).join('') +
-    `<div class="card sess"><div class="day d-Thu">Thu</div><div class="grow"><h3>Rest</h3></div></div>
-     <a class="card sess" href="#rides"><div class="day d-Sun">Sun</div><div class="grow"><h3>MTB ride</h3><div class="sub">Log rides on the Rides tab</div></div></a>`;
+    weekPlan(w);
+}
+// Week layout: Mon Str1 · Tue HIIT1 · Wed Str2 · Thu Rest · Fri HIIT2 · Sat Str3 + MTB ride · Sun Rest
+const restCard = d => `<div class="card sess"><div class="day d-${DAYS[(parseISO(d).getDay() + 6) % 7]}">${DAYS[(parseISO(d).getDay() + 6) % 7]}<small>${fmt(d, { month: 'numeric', day: 'numeric' })}</small></div><div class="grow"><h3>Rest</h3></div></div>`;
+const rideCard = d => `<a class="card sess" href="#ride/new"><div class="day d-Sat">Sat<small>${fmt(d, { month: 'numeric', day: 'numeric' })}</small></div><div class="grow"><h3>🚵 MTB ride</h3><div class="sub">Tap to log your ride</div></div></a>`;
+function weekPlan(w) {
+  const day = off => iso(addDays(parseISO(weekStart(w)), off));
+  const ss = P.sessions.filter(s => s.week === w);
+  const at = off => ss.filter(s => s.day_offset === off).map(s => sessionCard(s)).join('');
+  return at(0) + at(1) + at(2) + restCard(day(3)) + at(4) + at(5) + rideCard(day(5)) + restCard(day(6));
 }
 
 /* ----- strength session (home or gym) ----- */
