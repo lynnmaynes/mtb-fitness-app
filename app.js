@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const PROGRAM_VERSION = 2;   // program.json with gym plans
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -172,6 +172,14 @@ function setsFor(s, t = 'Home') {
   return out;
 }
 const status = (who, sid) => val(who, 'sessions', sid, 'status');
+// Each person has their own Date Done / Duration (v2.1). Older data kept one shared value - used only as a fallback.
+const myDate = (who, sid) => val(who, 'sessions', sid, 'dateDone') ?? val('shared', 'sessions', sid, 'dateDone') ?? '';
+function partnerDateNote(sid) {
+  const pt = partner(); if (!pt) return '';
+  const d = val(pt, 'sessions', sid, 'dateDone'); const st = status(pt, sid);
+  if (!d && !st) return '';
+  return `<div class="sub mt">${cap(pt)}: ${st ? esc(st) : 'in progress'}${d ? ' · ' + fmt(d) : ''}</div>`;
+}
 function chip(who, sid) {
   const st = status(who, sid) || '—'; const s = P._sess[sid];
   return `<span class="chip ${esc(st)} ${who === me() ? 'me' : ''}">${s && isStr(s) ? tIcon(where(who, s)) + ' ' : ''}${esc(cap(who))}: ${esc(st)}</span>`;
@@ -277,9 +285,9 @@ function vSession(id) {
   <div class="seg mt"><button data-where="${id}|Home" class="${gym ? '' : 'on'}">🏠 Home</button><button data-where="${id}|Gym" class="${gym ? 'on' : ''}">🏋️ Gym</button></div>
   ${pt && !ptSame ? `<div class="sub mt">${cap(pt)} is doing this one at ${where(pt, s) === 'Gym' ? 'the gym' : 'home'}.</div>` : ''}
   <div class="card grid2">
-    <div><label class="f">Date done (shared)</label><input type="date" data-f="shared|sessions|${id}|dateDone" value="${esc(val('shared', 'sessions', id, 'dateDone') || '')}"></div>
+    <div><label class="f">My date done</label><input type="date" data-f="${me()}|sessions|${id}|dateDone" value="${esc(myDate(me(), id))}"></div>
     <div><label class="f">My status</label>${selectHtml(`${me()}|sessions|${id}|status`, P.status_options, status(me(), id))}</div>
-  </div>`;
+  </div>${partnerDateNote(id)}`;
   for (const pe of pl.exercises) {
     const ex = exById(pe.exercise_id); const secs = pe.target_type === 'seconds';
     const nm = ex.video_url ? `<a href="${esc(ex.video_url)}" target="_blank" rel="noopener">${esc(ex.name)}</a>` : esc(ex.name);
@@ -311,7 +319,7 @@ function vSession(id) {
     html += `</div>`;
   }
   html += `<div class="card"><div class="grid2">
-    <div><label class="f">Duration min (shared)</label><input inputmode="numeric" data-num data-f="shared|sessions|${id}|duration" value="${esc(val('shared', 'sessions', id, 'duration') ?? '')}"></div>
+    <div><label class="f">My duration (min)</label><input inputmode="numeric" data-num data-f="${me()}|sessions|${id}|duration" value="${esc(val(me(), 'sessions', id, 'duration') ?? val('shared', 'sessions', id, 'duration') ?? '')}"></div>
     <div><label class="f">My RPE (1-10)</label>${selectHtml(`${me()}|sessions|${id}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'sessions', id, 'rpe'))}</div></div>
     <label class="f">Session notes (shared)</label><textarea data-f="shared|sessions|${id}|notes">${esc(val('shared', 'sessions', id, 'notes') || '')}</textarea>
     <button class="btn block" data-finish="${id}">Finish workout ✓</button></div>`;
@@ -333,7 +341,7 @@ function vHiit(id) {
   <div class="sub">On the elliptical, match the effort and track the resistance level.</div></div>
   ${timerBox('hbox-' + id, iv.reps, iv.work_sec)}
   <div class="card">
-   <div class="grid2"><div><label class="f">Date done (shared)</label><input type="date" data-f="shared|sessions|${id}|dateDone" value="${esc(val('shared', 'sessions', id, 'dateDone') || '')}"></div>
+   <div class="grid2"><div><label class="f">My date done</label><input type="date" data-f="${me()}|sessions|${id}|dateDone" value="${esc(myDate(me(), id))}"></div>
    <div><label class="f">My status</label>${selectHtml(`${me()}|sessions|${id}|status`, P.status_options, status(me(), id))}</div></div>
    <div class="grid2"><div><label class="f">Machine</label>${selectHtml(`${k}|machine`, P.machine_options, val(me(), 'hiit', id, 'machine'))}</div>
    <div><label class="f">Intervals completed</label><input inputmode="numeric" data-num id="hcomp" data-f="${k}|intervals" value="${v('intervals')}"></div></div>
@@ -343,7 +351,7 @@ function vHiit(id) {
    <div class="grid3"><div><label class="f">Avg HR</label><input inputmode="numeric" data-num data-f="${k}|avgHr" value="${v('avgHr')}"></div>
    <div><label class="f">Max HR</label><input inputmode="numeric" data-num data-f="${k}|maxHr" value="${v('maxHr')}"></div>
    <div><label class="f">RPE</label>${selectHtml(`${k}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'hiit', id, 'rpe'))}</div></div>
-   <label class="f">Total time min (shared)</label><input inputmode="numeric" data-num data-f="shared|hiit|${id}|totalTime" value="${esc(val('shared', 'hiit', id, 'totalTime') ?? '')}">
+   <label class="f">My total time (min)</label><input inputmode="numeric" data-num data-f="${k}|totalTime" value="${esc(val(me(), 'hiit', id, 'totalTime') ?? val('shared', 'hiit', id, 'totalTime') ?? '')}">
    <label class="f">Notes (shared)</label><textarea data-f="shared|hiit|${id}|notes">${esc(val('shared', 'hiit', id, 'notes') || '')}</textarea>
    ${pr ? `<div class="partner ${pt} mt">${cap(pt)}: ${esc(pr.machine || '')} ${pr.intervals != null ? pr.intervals + '/' + iv.reps + ' intervals' : ''} ${pr.avgHr ? '· avg HR ' + pr.avgHr : ''}</div>` : ''}
    <button class="btn block" data-finish="${id}">Finish HIIT ✓</button></div>`;
@@ -532,7 +540,12 @@ document.addEventListener('click', e => {
     holdTimer(t, +t.dataset.hold);
   }
 });
-function autoDate(sid) { if (P._sess[sid] && !val('shared', 'sessions', sid, 'dateDone')) { setVal('shared', 'sessions', sid, 'dateDone', todayISO()); const i = document.querySelector(`[data-f="shared|sessions|${sid}|dateDone"]`); if (i) i.value = todayISO(); } }
+function autoDate(sid) {   // first thing you log in a session stamps YOUR date (not your partner's)
+  if (!P._sess[sid] || val(me(), 'sessions', sid, 'dateDone')) return;
+  const d = val('shared', 'sessions', sid, 'dateDone') && !val(partner(), 'sessions', sid, 'dateDone') ? val('shared', 'sessions', sid, 'dateDone') : todayISO();
+  setVal(me(), 'sessions', sid, 'dateDone', d);
+  const i = document.querySelector(`[data-f="${me()}|sessions|${sid}|dateDone"]`); if (i) i.value = d;
+}
 $('#syncBtn').onclick = () => syncNow(true);
 addEventListener('hashchange', () => { scrollTo(0, 0); render(); });
 addEventListener('online', () => scheduleSync(500));
