@@ -4,11 +4,11 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.2';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
   return `<div class="card intro"><h3>▶ Start here: watch the intro video</h3>
-    <p class="sub">The booklet recommends every new starter watches this before doing anything else. It answers the 10 most common questions from people following the programme.</p>
+    <p class="sub">It answers the 10 most common questions from people following the programme.</p>
     <a class="btn block" href="${INTRO_VIDEO}" target="_blank" rel="noopener">Watch on YouTube</a>
     ${full ? '' : `<button class="btn block sec small" data-introdone="1">I've watched it - hide this</button>`}</div>`;
 }
@@ -502,7 +502,7 @@ function vSettings() {
    <details class="mt"><summary class="sub">Advanced</summary><label class="f">API base URL</label><input id="sApi" autocapitalize="off" value="${esc(cfg.api)}"></details>
    <button class="btn block" id="sSave">Save & sync</button></div>
    <div class="card"><h3>Programme</h3>
-   <p class="sub">Intro video: 10 common questions from people following the programme. The booklet recommends watching it before you start.</p>
+   <p class="sub">Intro video: 10 common questions from people following the programme.</p>
    <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a></div>
    <div class="card"><h3>Data</h3>
    <div class="sub">Last sync: ${syncState.last ? new Date(syncState.last).toLocaleString() : 'never'}${syncState.err ? `<br><span style="color:var(--bad)">${esc(syncState.err)}</span>` : ''}</div>
