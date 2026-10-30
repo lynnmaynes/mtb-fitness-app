@@ -4,7 +4,14 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
+const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
+function introCard(full) {   // the booklet asks every new starter to watch this first
+  return `<div class="card intro"><h3>▶ Start here: watch the intro video</h3>
+    <p class="sub">The booklet recommends every new starter watches this before doing anything else. It answers the 10 most common questions from people following the programme.</p>
+    <a class="btn block" href="${INTRO_VIDEO}" target="_blank" rel="noopener">Watch on YouTube</a>
+    ${full ? '' : `<button class="btn block sec small" data-introdone="1">I've watched it - hide this</button>`}</div>`;
+}
 const PROGRAM_VERSION = 2;   // program.json with gym plans
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -248,6 +255,7 @@ function vToday() {
   const todays = P.sessions.filter(s => sessDate(s) === t);
   const dow = DAYS[(new Date().getDay() + 6) % 7];
   let html = `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h1>`;
+  if (!val(me(), 'settings', 'main', 'introWatched')) html += introCard(false);
   if (w === 0) html += `<div class="card">Programme starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.</div>`;
   if (w > 12) html += `<div class="card">🎉 12 weeks done. Check <a href="#progress">Progress</a>.</div>`;
   if (todays.length) html += `<h2>Today's workout</h2>` + todays.map(s => sessionCard(s)).join('');
@@ -493,6 +501,9 @@ function vSettings() {
    <label class="f">Default rest timer between sets (seconds)</label><input id="sRest" inputmode="numeric" value="${esc(cfg.restSec)}">
    <details class="mt"><summary class="sub">Advanced</summary><label class="f">API base URL</label><input id="sApi" autocapitalize="off" value="${esc(cfg.api)}"></details>
    <button class="btn block" id="sSave">Save & sync</button></div>
+   <div class="card"><h3>Programme</h3>
+   <p class="sub">Intro video: 10 common questions from people following the programme. The booklet recommends watching it before you start.</p>
+   <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a></div>
    <div class="card"><h3>Data</h3>
    <div class="sub">Last sync: ${syncState.last ? new Date(syncState.last).toLocaleString() : 'never'}${syncState.err ? `<br><span style="color:var(--bad)">${esc(syncState.err)}</span>` : ''}</div>
    <button class="btn block sec" id="sProg">Reload programme from repo</button>
@@ -533,6 +544,8 @@ document.addEventListener('click', e => {
   } else if (t.dataset.tstart) { startT(t.dataset.tstart);
   } else if (t.dataset.tpause) { pauseT(t.dataset.tpause);
   } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop) endT(true);
+  } else if (t.dataset.introdone) {
+    setVal(me(), 'settings', 'main', 'introWatched', true); render();
   } else if (t.dataset.finish) {
     const id = t.dataset.finish; setVal(me(), 'sessions', id, 'status', 'Done'); autoDate(id); toast('Nice work! 💪'); location.hash = '#today';
   } else if (t.dataset.stretch) {

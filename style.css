@@ -88,3 +88,7 @@ td.me{color:var(--acc2)}td.pt{color:var(--jarom)}
 .last{font-size:13px;color:var(--ok);margin:-2px 0 8px}
 .span2{grid-column:span 2}
 .span2 input{width:100%}
+
+.intro{border-color:var(--acc)}
+.intro h3{color:var(--acc2)}
+.intro p{margin:6px 0 4px}
