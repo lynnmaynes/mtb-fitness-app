@@ -92,3 +92,8 @@ td.me{color:var(--acc2)}td.pt{color:var(--jarom)}
 .intro{border-color:var(--acc)}
 .intro h3{color:var(--acc2)}
 .intro p{margin:6px 0 4px}
+
+.btn.strava{background:#fc4c02;color:#fff}
+.stravabox{border-color:#7a2c0c}
+.stravabox h3{color:#fc7a42}
+.stag{color:#fc7a42;font-weight:700}

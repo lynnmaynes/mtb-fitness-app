@@ -4,7 +4,8 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.4.3';
+const APP_VERSION = '2.5.0';
+const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
   return `<div class="card intro"><h3>▶ Start here: watch the intro video</h3>
@@ -123,6 +124,7 @@ async function syncNow(manual) {
     await syncFile(me(), true);
     await syncFile('shared', true);
     if (partner()) await syncFile(partner(), false);
+    await stravaSync();
     LS.set('data', D); LS.set('shas', shas);
     syncState.last = Date.now(); LS.set('lastSync', syncState.last);
     syncState.dirty = false; LS.set('dirty', false);
@@ -137,6 +139,97 @@ async function loadProgram() {
   P = data; LS.set('program', P);
 }
 const configured = () => cfg.owner && cfg.repo && cfg.token && cfg.me;
+
+/* ---------------- Strava ----------------
+ * The phone never talks to Strava directly. It writes requests into its own data file and pokes
+ * strava/kick/<me>.json; a GitHub Action in the data repo does the Strava work and reports back
+ * in strava/state.json (read-only here). Garmin creates activities; the app links to them.
+ */
+let SV = LS.get('strava', null);
+const sv = () => SV || {};
+const stravaAthlete = (who = me()) => sv().athletes?.[who] || null;
+const usesGarmin = (who = me()) => val(who, 'settings', 'main', 'garmin') ?? true;
+const tOf = (f, coll, key, field) => rec(f, coll, key)?._t?.[field] || 0;
+const stravaConnecting = () => { const t = tOf(me(), 'settings', 'main', 'stravaCode'); return t && t > (sv().handled?.[me()]?.code || 0); };
+const stravaDisconnecting = () => { const t = tOf(me(), 'settings', 'main', 'stravaDisconnect'); return val(me(), 'settings', 'main', 'stravaDisconnect') && t > (sv().handled?.[me()]?.disconnect || 0); };
+const sState = sid => sv().sessions?.[me()]?.[sid] || null;
+const reqPending = sid => { const t = tOf(me(), 'stravaReq', sid, 'action'); return val(me(), 'stravaReq', sid, 'action') && t > (sState(sid)?.reqT || 0); };
+function stravaKick(why) { LS.set('kick', why); scheduleSync(800); }
+function stravaReq(sid, action) { setVal(me(), 'stravaReq', sid, 'action', null); setVal(me(), 'stravaReq', sid, 'action', action); stravaKick(action); }
+async function stravaSync() {
+  try { const { data } = await ghGetJson('strava/state.json'); if (data) { SV = data; LS.set('strava', SV); } } catch { }
+  const why = LS.get('kick', ''); if (!why) return;
+  try {
+    const path = `strava/kick/${me()}.json`; const cur = await gh('GET', path);
+    await ghPutJson(path, { t: Date.now(), why }, cur?.sha, `${cap(me())} phone: Strava ${why}`);
+    LS.set('kick', '');
+  } catch (e) { if (!(e.status === 409 || e.status === 422)) throw e; }
+}
+function stravaAuthUrl() {
+  const redirect = location.origin + location.pathname;
+  return `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code&approval_prompt=auto&scope=read,activity:read_all,activity:write&redirect_uri=${encodeURIComponent(redirect)}&state=${encodeURIComponent(me() || 'x')}`;
+}
+function stravaAcceptCode(code, scope) {   // code from Strava's redirect (or pasted by hand)
+  if (!/activity:write/.test(scope || '') || !/activity:read_all/.test(scope || '')) {
+    toast('Please leave all the Strava permission boxes ticked'); return false;
+  }
+  setVal(me(), 'settings', 'main', 'stravaCode', `${code}|${scope}`); stravaKick('connect'); toast('Connecting to Strava… about a minute'); return true;
+}
+function handleStravaReturn() {   // runs once at start-up: did Strava just send us back here?
+  const q = new URLSearchParams(location.search); if (!q.has('code') && !q.has('error')) return false;
+  const code = q.get('code'), scope = q.get('scope') || '', err = q.get('error');
+  history.replaceState(null, '', location.pathname + '#settings');
+  if (err) { setTimeout(() => toast('Strava connection cancelled'), 300); return false; }
+  if (configured()) { stravaAcceptCode(code, scope); return false; }
+  // iPhone home-screen apps can come back in a separate Safari window that has no settings - hand the code over by copy/paste
+  view().innerHTML = `<h1>Almost connected</h1><div class="card"><p>Strava sent this window back without your app settings (this happens on iPhone).</p>
+    <p><b>1.</b> Copy this code: <input id="sc" readonly value="${esc(code + '|' + scope)}"></p><button class="btn block" id="scCopy">Copy code</button>
+    <p class="mt"><b>2.</b> Close this window, open <b>MTB 12</b> from your home screen, go to ⚙ → Strava → <b>Paste a code</b>.</p></div>`;
+  $('#scCopy').onclick = () => { $('#sc').select(); navigator.clipboard?.writeText($('#sc').value).then(() => toast('Copied'), () => toast('Select the code and copy it')); };
+  return true;
+}
+const stravaLink = id => `<a href="https://www.strava.com/activities/${id}" target="_blank" rel="noopener">View on Strava</a>`;
+function stravaStatus(sid) {   // the Strava line on a finished session
+  if (!stravaAthlete() || !['Done', 'Partial'].includes(status(me(), sid))) return '';
+  const st = sState(sid); const btns = (post = 'Post to Strava') => `<div class="grid2 mt"><button class="btn small strava" data-spost="${sid}">${post}</button><button class="btn small sec" data-sskip="${sid}">Skip</button></div>`;
+  let body;
+  if (reqPending(sid)) body = `<span class="sub">Sending to Strava… (about a minute)</span>`;
+  else if (st?.state === 'linked') body = `✓ On Strava, added to your Garmin activity <b>${esc(st.name || '')}</b> · ${stravaLink(st.id)}`;
+  else if (st?.state === 'posted') body = `✓ Posted to Strava · ${stravaLink(st.id)}`;
+  else if (st?.state === 'skipped') body = `<span class="sub">Not on Strava (skipped).</span><div class="mt"><button class="btn small sec" data-spost="${sid}">Post to Strava anyway</button></div>`;
+  else if (usesGarmin() && st?.state === 'waiting') body = `<span class="sub">Waiting for your Garmin to upload this to Strava - it's checked every hour. Only post it yourself if you didn't record it on the watch.</span>` + btns('Post it myself');
+  else body = `<span class="sub">Not on Strava yet.</span>` + btns();
+  return `<div class="card stravabox"><h3>Strava</h3><div class="mt">${body}</div></div>`;
+}
+function stravaPrompts() {   // Today: sessions that still need a Post / Skip decision
+  if (!stravaAthlete()) return '';
+  const out = [];
+  for (const [sid, st] of Object.entries(sv().sessions?.[me()] || {})) {
+    if (!['waiting', 'nomatch'].includes(st.state) || reqPending(sid) || !P._sess[sid]) continue;
+    if (usesGarmin() && st.state === 'waiting' && Date.now() - (st.waitingSince || 0) < 864e5) continue;   // give the Garmin 24 h
+    const s = P._sess[sid];
+    out.push(`<div class="card stravabox"><h3>📤 ${s.type === 'HIIT' ? 'HIIT ' + s.n : 'Strength ' + s.n} (week ${s.week}) isn't on Strava</h3>
+      <div class="sub">${usesGarmin() ? 'No Garmin activity turned up for ' + fmt(myDate(me(), sid)) + '.' : 'Done ' + fmt(myDate(me(), sid)) + '.'}</div>
+      <div class="grid2 mt"><button class="btn small strava" data-spost="${sid}">Post to Strava</button><button class="btn small sec" data-sskip="${sid}">Skip</button></div></div>`);
+  }
+  return out.join('');
+}
+function stravaSettings() {
+  const a = stravaAthlete(); const err = sv().errors?.[me()];
+  let html = `<div class="card"><h3>Strava</h3>`;
+  if (stravaDisconnecting()) html += `<p class="sub">Disconnecting… about a minute.</p>`;
+  else if (stravaConnecting()) html += `<p class="sub">Connecting… about a minute. This updates on the next sync.</p>`;
+  else if (a && !a.needsReconnect) html += `<p>Connected as <b>${esc(a.name || 'Strava athlete')}</b></p>`;
+  else html += `<p class="sub">${a?.needsReconnect ? 'Strava access stopped working - connect again.' : 'Connect your own Strava account. Finished workouts are matched to your Garmin uploads (or posted when you tap Post), and outdoor rides are brought into Rides.'}</p>
+    <a class="btn block strava" href="${esc(stravaAuthUrl())}">Connect with Strava</a>`;
+  if (err) html += `<div class="warnbox">${esc(err)}</div>`;
+  html += `<label class="row mt"><input type="checkbox" id="sGarmin" style="width:auto" ${usesGarmin() ? 'checked' : ''}><span>I record workouts on a Garmin (or another watch that uploads to Strava)</span></label>
+    <div class="sub">On: the app waits for your watch's upload and adds the details to it. Off: you get a Post to Strava button straight away.</div>`;
+  if (a && !stravaDisconnecting()) html += `<button class="btn block sec small" id="sStravaOff">Disconnect Strava</button>`;
+  html += `<details class="mt"><summary class="sub">Paste a code (iPhone)</summary><input id="sCode" placeholder="code from the Almost connected page" autocapitalize="off" autocorrect="off"><button class="btn block sec small" id="sCodeGo">Use code</button></details>`;
+  if (sv().updated) html += `<p class="sub mt">Strava last checked ${ago(sv().updated).replace('Synced', 'just now')}.</p>`;
+  return html + `</div>`;
+}
 
 function paintSync() {
   const dot = $('#syncDot'), txt = $('#syncTxt');
@@ -256,6 +349,7 @@ function vToday() {
   const dow = DAYS[(new Date().getDay() + 6) % 7];
   let html = `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h1>`;
   if (!val(me(), 'settings', 'main', 'introWatched')) html += introCard(false);
+  html += stravaPrompts();
   if (w === 0) html += `<div class="card">Programme starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.</div>`;
   if (w > 12) html += `<div class="card">🎉 12 weeks done. Check <a href="#progress">Progress</a>.</div>`;
   if (todays.length) html += `<h2>Today's workout</h2>` + todays.map(s => sessionCard(s)).join('');
@@ -338,7 +432,7 @@ function vSession(id) {
     <div><label class="f">My duration (min)</label><input inputmode="numeric" data-num data-f="${me()}|sessions|${id}|duration" value="${esc(val(me(), 'sessions', id, 'duration') ?? val('shared', 'sessions', id, 'duration') ?? '')}"></div>
     <div><label class="f">My RPE (1-10)</label>${selectHtml(`${me()}|sessions|${id}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'sessions', id, 'rpe'))}</div></div>
     <label class="f">Session notes (shared)</label><textarea data-f="shared|sessions|${id}|notes">${esc(val('shared', 'sessions', id, 'notes') || '')}</textarea>
-    <button class="btn block" data-finish="${id}">Finish workout ✓</button></div>`;
+    <button class="btn block" data-finish="${id}">Finish workout ✓</button></div>${stravaStatus(id)}`;
   view().innerHTML = html; paintT();
 }
 function markSet(coll, lid) { const b = document.querySelector(`[data-done="${coll}|${lid}"]`); if (b) b.classList.add('on'); const i = document.querySelector(`[data-f="${me()}|${coll}|${lid}|secs"]`); if (i) i.value = val(me(), coll, lid, 'secs') ?? ''; }
@@ -370,7 +464,7 @@ function vHiit(id) {
    <label class="f">My total time (min)</label><input inputmode="numeric" data-num data-f="${k}|totalTime" value="${esc(val(me(), 'hiit', id, 'totalTime') ?? val('shared', 'hiit', id, 'totalTime') ?? '')}">
    <label class="f">Notes (shared)</label><textarea data-f="shared|hiit|${id}|notes">${esc(val('shared', 'hiit', id, 'notes') || '')}</textarea>
    ${pr ? `<div class="partner ${pt} mt">${cap(pt)}: ${esc(pr.machine || '')} ${pr.intervals != null ? pr.intervals + '/' + iv.reps + ' intervals' : ''} ${pr.avgHr ? '· avg HR ' + pr.avgHr : ''}</div>` : ''}
-   <button class="btn block" data-finish="${id}">Finish HIIT ✓</button></div>`;
+   <button class="btn block" data-finish="${id}">Finish HIIT ✓</button></div>${stravaStatus(id)}`;
   TCFG['hbox-' + id] = { reps: iv.reps, work: iv.work_sec, rest: iv.rest_sec,
     onEnd: done => { const cur = val(me(), 'hiit', id, 'intervals'); if (done && (cur == null || cur < done)) setVal(me(), 'hiit', id, 'intervals', done); const c = $('#hcomp'); if (c) c.value = val(me(), 'hiit', id, 'intervals') ?? ''; } };
   paintT();
@@ -451,7 +545,7 @@ function vRides() {
   const list = rides();
   view().innerHTML = `<h1>MTB Rides</h1><a class="btn block" href="#ride/new">+ Log a ride</a>
    ${list.length ? list.map(([id, r]) => `<a class="card sess" href="#ride/${id}"><div class="day d-Sun">${fmt(r.date, { month: 'numeric', day: 'numeric' })}</div>
-     <div class="grow"><h3>${esc(r.route || 'Ride')}</h3><div class="sub">${esc(r.rider || '')} · ${r.miles ?? '–'} mi · ${r.elev ?? '–'} ft · ${r.time ?? '–'} min</div></div></a>`).join('') : '<p class="sub center mt">No rides logged yet.</p>'}`;
+     <div class="grow"><h3>${esc(r.route || 'Ride')}</h3><div class="sub">${esc(r.rider || '')} · ${r.miles ?? '–'} mi · ${r.elev ?? '–'} ft · ${r.time ?? '–'} min${r.stravaIds ? ' · <span class="stag">Strava</span>' : ''}</div></div></a>`).join('') : '<p class="sub center mt">No rides logged yet.</p>'}`;
 }
 function vRide(id) {
   if (id === 'new') { id = `R-${Date.now().toString(36)}-${me()}`; setVal('shared', 'rides', id, 'date', todayISO()); setVal('shared', 'rides', id, 'rider', cap(me())); history.replaceState(null, '', '#ride/' + id); }
@@ -467,6 +561,7 @@ function vRide(id) {
    <div><label class="f">Max HR</label><input inputmode="numeric" data-num data-f="${k}|maxHr" value="${v('maxHr')}"></div>
    <div><label class="f">RPE</label>${selectHtml(`${k}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val('shared', 'rides', id, 'rpe'))}</div></div>
    <label class="f">Notes</label><textarea data-f="${k}|notes">${v('notes')}</textarea>
+   ${val('shared', 'rides', id, 'stravaIds') ? `<div class="sub mt">Imported from Strava · ${String(val('shared', 'rides', id, 'stravaIds')).split(',').map(stravaLink).join(' · ')}</div>` : ''}
    <a class="btn block" href="#rides">Save</a><button class="btn block danger" data-delride="${id}">Delete ride</button></div>`;
 }
 
@@ -501,6 +596,7 @@ function vSettings() {
    <label class="f">Default rest timer between sets (seconds)</label><input id="sRest" inputmode="numeric" value="${esc(cfg.restSec)}">
    <details class="mt"><summary class="sub">Advanced</summary><label class="f">API base URL</label><input id="sApi" autocapitalize="off" value="${esc(cfg.api)}"></details>
    <button class="btn block" id="sSave">Save & sync</button></div>
+   ${configured() && P ? stravaSettings() : ''}
    <div class="card"><h3>Programme</h3>
    <p class="sub">Intro video: 10 common questions from people following the programme.</p>
    <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a></div>
@@ -516,6 +612,13 @@ function vSettings() {
     if (!configured()) return toast('Fill in all fields');
     if (defTrack(cfg.me) !== $('#sTrack').value || !val(cfg.me, 'settings', 'main', 'defaultTrack')) setVal(cfg.me, 'settings', 'main', 'defaultTrack', $('#sTrack').value);
     try { await loadProgram(); prep(); await syncNow(true); location.hash = '#today'; render(); } catch (e) { toast(e.message); syncState.err = e.message; paintSync(); }
+  };
+  if ($('#sGarmin')) $('#sGarmin').onchange = e => setVal(me(), 'settings', 'main', 'garmin', e.target.checked);
+  if ($('#sStravaOff')) $('#sStravaOff').onclick = () => { if (confirm('Disconnect Strava? Activities already on Strava stay there.')) { setVal(me(), 'settings', 'main', 'stravaDisconnect', Date.now()); stravaKick('disconnect'); render(); } };
+  if ($('#sCodeGo')) $('#sCodeGo').onclick = () => {
+    let t = $('#sCode').value.trim(); if (!t) return;
+    if (t.includes('code=')) { const u = new URLSearchParams(t.slice(t.indexOf('?') + 1)); t = u.get('code') + '|' + (u.get('scope') || ''); }
+    const [c, sc] = t.split('|'); if (stravaAcceptCode(c, sc)) render();
   };
   $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Programme reloaded'); render(); } catch (e) { toast(e.message); } };
   $('#sExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: D }, null, 1)], { type: 'application/json' })); a.download = `mtb-backup-${todayISO()}.json`; a.click(); };
@@ -547,7 +650,13 @@ document.addEventListener('click', e => {
   } else if (t.dataset.introdone) {
     setVal(me(), 'settings', 'main', 'introWatched', true); render();
   } else if (t.dataset.finish) {
-    const id = t.dataset.finish; setVal(me(), 'sessions', id, 'status', 'Done'); autoDate(id); toast('Nice work! 💪'); location.hash = '#today';
+    const id = t.dataset.finish; setVal(me(), 'sessions', id, 'status', 'Done'); autoDate(id); toast('Nice work! 💪');
+    if (stravaAthlete()) stravaKick('finish');
+    location.hash = '#today';
+  } else if (t.dataset.spost) {
+    stravaReq(t.dataset.spost, 'post'); toast('Sending to Strava…'); softRender();
+  } else if (t.dataset.sskip) {
+    stravaReq(t.dataset.sskip, 'skip'); softRender();
   } else if (t.dataset.stretch) {
     const [d, i] = t.dataset.stretch.split('|'); const arr = [...(val(me(), 'stretch', d, 's') || Array(9).fill(false))];
     arr[+i] = !arr[+i]; setVal(me(), 'stretch', d, 's', arr); t.classList.toggle('on', arr[+i]);
@@ -611,5 +720,5 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
 }
-render();
+if (!handleStravaReturn()) render();
 if (configured()) syncNow();
