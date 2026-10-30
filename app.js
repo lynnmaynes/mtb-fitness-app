@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.4.2';
+const APP_VERSION = '2.4.3';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
   return `<div class="card intro"><h3>▶ Start here: watch the intro video</h3>
@@ -605,6 +605,11 @@ async function wake(on) { try { if (on && 'wakeLock' in navigator) wl = await na
 let toastT;
 function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); }
 
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  // when a new version takes over, reload once so the new screens appear straight away
+  const hadController = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
+}
 render();
 if (configured()) syncNow();
