@@ -1,5 +1,5 @@
 // Service worker: cache the app shell so it opens offline. Data calls to GitHub are never cached.
-const CACHE = 'mtb-shell-v2.5.0';
+const CACHE = 'mtb-shell-v2.5.1';
 const SHELL = ['./', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'icons/rider-icon-192.png', 'icons/rider-icon-512.png', 'icons/rider-apple-touch-180.png', 'icons/favicon-32.png', 'icons/rider.svg'];
 // cache:'reload' / 'no-cache' bypass the browser's 10-minute HTTP cache, so a new release shows up on the next open
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });

@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -547,12 +547,21 @@ function vRides() {
    ${list.length ? list.map(([id, r]) => `<a class="card sess" href="#ride/${id}"><div class="day d-Sun">${fmt(r.date, { month: 'numeric', day: 'numeric' })}</div>
      <div class="grow"><h3>${esc(r.route || 'Ride')}</h3><div class="sub">${esc(r.rider || '')} · ${r.miles ?? '–'} mi · ${r.elev ?? '–'} ft · ${r.time ?? '–'} min${r.stravaIds ? ' · <span class="stag">Strava</span>' : ''}</div></div></a>`).join('') : '<p class="sub center mt">No rides logged yet.</p>'}`;
 }
+// A new ride is only a draft until you type something - backing out leaves nothing behind (2.5.1)
+let rideDraft = null;   // { id, date, rider } defaults shown on the form but not saved yet
+function saveRideDraft(id) {
+  if (!rideDraft || rideDraft.id !== id || rec('shared', 'rides', id)) return;
+  const d = rideDraft; rideDraft = null;
+  setVal('shared', 'rides', id, 'date', d.date); setVal('shared', 'rides', id, 'rider', d.rider);
+}
 function vRide(id) {
-  if (id === 'new') { id = `R-${Date.now().toString(36)}-${me()}`; setVal('shared', 'rides', id, 'date', todayISO()); setVal('shared', 'rides', id, 'rider', cap(me())); history.replaceState(null, '', '#ride/' + id); }
-  const k = `shared|rides|${id}`; const v = f => esc(val('shared', 'rides', id, f) ?? '');
+  if (id === 'new') { id = `R-${Date.now().toString(36)}-${me()}`; rideDraft = { id, date: todayISO(), rider: cap(me()) }; history.replaceState(null, '', '#ride/' + id); }
+  const draft = rideDraft?.id === id && !rec('shared', 'rides', id) ? rideDraft : null;
+  const rv_ = f => val('shared', 'rides', id, f) ?? (draft ? draft[f] : undefined);
+  const k = `shared|rides|${id}`; const v = f => esc(rv_(f) ?? '');
   view().innerHTML = `<a href="#rides" class="sub">‹ Rides</a><h1>Ride</h1><div class="card">
    <div class="grid2"><div><label class="f">Date</label><input type="date" data-f="${k}|date" value="${v('date')}"></div>
-   <div><label class="f">Rider</label>${selectHtml(`${k}|rider`, ['Lynn', 'Jarom', 'Both'], val('shared', 'rides', id, 'rider'))}</div></div>
+   <div><label class="f">Rider</label>${selectHtml(`${k}|rider`, ['Lynn', 'Jarom', 'Both'], rv_('rider'))}</div></div>
    <label class="f">Trail / route</label><input data-f="${k}|route" value="${v('route')}">
    <div class="grid3"><div><label class="f">Miles</label><input inputmode="decimal" data-num data-f="${k}|miles" value="${v('miles')}"></div>
    <div><label class="f">Elev gain ft</label><input inputmode="numeric" data-num data-f="${k}|elev" value="${v('elev')}"></div>
@@ -632,6 +641,7 @@ document.addEventListener('change', e => {
   let v = el.value.trim();
   if (el.hasAttribute('data-num') && v !== '') { const n = Number(v.replace(',', '.')); v = isNaN(n) ? v : n; }
   if (field === 'rpe' && v !== '') v = Number(v);
+  if (coll === 'rides') saveRideDraft(key);   // first entry on a new ride saves its date + rider too
   setVal(file_, coll, key, field, v === '' ? null : v);
   if ((coll === 'sets' || coll === 'gsets') && v !== '' && v !== null && field !== 'band') autoDate(key.split('-').slice(0, 2).join('-'));
   if (field === 'status' && v === 'Done') autoDate(key);
@@ -663,7 +673,9 @@ document.addEventListener('click', e => {
   } else if (t.dataset.stretchall) {
     setVal(me(), 'stretch', t.dataset.stretchall, 's', Array(9).fill(true)); render();
   } else if (t.dataset.delride) {
-    if (confirm('Delete this ride?')) { setVal('shared', 'rides', t.dataset.delride, 'deleted', true); location.hash = '#rides'; }
+    const id = t.dataset.delride;
+    if (!rec('shared', 'rides', id)) { rideDraft = null; location.hash = '#rides'; }   // never saved - nothing to delete
+    else if (confirm('Delete this ride?')) { setVal('shared', 'rides', id, 'deleted', true); location.hash = '#rides'; }
   } else if (t.dataset.rest) {
     if (t.dataset.rest === 'skip') stopRest(); else if (rest) rest.end += 15000;
   } else if (t.dataset.hold !== undefined) {
