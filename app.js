@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.6.0';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -246,10 +246,23 @@ const parseISO = s => { const [y, m, d] = s.split('-').map(Number); return new D
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const todayISO = () => iso(new Date());
 const fmt = (s, o = { weekday: 'short', month: 'short', day: 'numeric' }) => s ? parseISO(s).toLocaleDateString(undefined, o) : '';
-const startISO = () => val('shared', 'settings', 'main', 'startDate') || P.start_date;
-const weekStart = w => iso(addDays(parseISO(startISO()), (w - 1) * 7));
-const sessDate = s => iso(addDays(parseISO(startISO()), (s.week - 1) * 7 + s.day_offset));
-function curWeek() { const d = Math.floor((parseISO(todayISO()) - parseISO(startISO())) / 864e5); return d < 0 ? 0 : d >= 84 ? 13 : Math.floor(d / 7) + 1; }
+/* Each person has their own schedule (2.6): a start Monday plus weeks pushed back.
+ * settings.main.startDate (any date - snapped to its Monday) and settings.main.push2..push12 = extra weeks inserted before that week. */
+const monday = d => { const x = parseISO(d); return iso(addDays(x, -((x.getDay() + 6) % 7))); };
+const startISO = (who = me()) => monday(val(who, 'settings', 'main', 'startDate') || val('shared', 'settings', 'main', 'startDate') || P.start_date);
+const pushAt = (who, w) => +(val(who, 'settings', 'main', 'push' + w) || 0);
+const pushedBefore = (who, w) => { let n = 0; for (let k = 2; k <= w; k++) n += pushAt(who, k); return n; };
+const weekStart = (w, who = me()) => iso(addDays(parseISO(startISO(who)), (w - 1 + pushedBefore(who, w)) * 7));
+const sessDate = (s, who = me()) => iso(addDays(parseISO(weekStart(s.week, who)), s.day_offset));
+const progEnd = (who = me()) => iso(addDays(parseISO(weekStart(12, who)), 6));
+// 0 = not started, 13 = finished; during a pushed-back (break) week it returns the upcoming week, with brk = true
+function weekInfo(who = me(), d = todayISO()) {
+  if (d < weekStart(1, who)) return { w: 0 };
+  if (d > progEnd(who)) return { w: 13 };
+  let w = 1; while (w < 12 && weekStart(w + 1, who) <= d) w++;
+  return d > iso(addDays(parseISO(weekStart(w, who)), 6)) ? { w: w + 1, brk: true } : { w };
+}
+const curWeek = (who = me()) => weekInfo(who).w;
 const clampW = w => Math.min(12, Math.max(1, w));
 const exById = id => P._ex?.[id];
 const plan = id => P._plans?.[id];
@@ -305,9 +318,9 @@ const restTxt = s => !s ? '0 (superset)' : (s >= 60 ? Math.floor(s / 60) + 'm' :
 const view = () => $('#view');
 function header() {
   if (!P) { $('#weekInfo').innerHTML = ''; return; }
-  const w = curWeek(); const s = P.sessions.find(x => x.week === clampW(w));
-  $('#weekInfo').innerHTML = w === 0 ? `<b>${cap(me())}</b>` :
-    w > 12 ? `<b>Programme complete</b><br>${cap(me())}` : `<b>Week ${w}</b> · ${esc(s.phase)}<br>${esc(s.block)} · ${cap(me())}`;
+  const { w, brk } = weekInfo(); const s = P.sessions.find(x => x.week === clampW(w));
+  $('#weekInfo').innerHTML = w === 0 ? `<b>${cap(me())}</b>` : w > 12 ? `<b>Programme complete</b><br>${cap(me())}` :
+    brk ? `<b>Break week</b><br>Week ${w} next · ${cap(me())}` : `<b>Week ${w}</b> · ${esc(s.phase)}<br>${esc(s.block)} · ${cap(me())}`;
 }
 function render() {
   prep(); header(); paintSync();
@@ -344,17 +357,19 @@ function sessionCard(s, opts = {}) {
     <div>${chip(me(), s.id)}${partner() ? chip(partner(), s.id) : ''}</div></div></a>`;
 }
 function vToday() {
-  const t = todayISO(); const w = curWeek();
+  const t = todayISO(); const { w, brk } = weekInfo();
   const todays = P.sessions.filter(s => sessDate(s) === t);
   const dow = DAYS[(new Date().getDay() + 6) % 7];
   let html = `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h1>`;
   if (!val(me(), 'settings', 'main', 'introWatched')) html += introCard(false);
   html += stravaPrompts();
-  if (w === 0) html += `<div class="card">Programme starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.</div>`;
+  if (w === 0) html += `<div class="card">Your programme starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.
+    <div class="mt"><a href="#settings/schedule">Change my start date</a></div></div>`;
+  if (brk) html += `<div class="card"><h3>Break week 🌴</h3><div class="sub">You pushed your schedule back. Week ${w} starts ${fmt(weekStart(w), { weekday: 'long', month: 'short', day: 'numeric' })}.</div></div>`;
   if (w > 12) html += `<div class="card">🎉 12 weeks done. Check <a href="#progress">Progress</a>.</div>`;
   if (todays.length) html += `<h2>Today's workout</h2>` + todays.map(s => sessionCard(s)).join('');
-  else if (w >= 1 && w <= 12) html += `<div class="card"><h3>${dow === 'Thu' || dow === 'Sun' ? 'Rest day 😴' : 'No session scheduled'}</h3><div class="sub">Catch up on a missed session from this week if needed.</div></div>`;
-  if (dow === 'Sat' && w >= 1 && w <= 12) html += rideCard(t);   // Saturday = MTB ride day (plus Strength 3)
+  else if (w >= 1 && w <= 12 && !brk) html += `<div class="card"><h3>${dow === 'Thu' || dow === 'Sun' ? 'Rest day 😴' : 'No session scheduled'}</h3><div class="sub">Catch up on a missed session from this week if needed.</div></div>`;
+  if (dow === 'Sat' && w >= 1 && w <= 12 && !brk) html += rideCard(t);   // Saturday = MTB ride day (plus Strength 3)
   // stretches today
   const sd = t;
   html += `<h2>Daily stretches</h2>${stretchSummary(sd)}`;
@@ -579,8 +594,8 @@ function weekStats(who, w) {
   const ss = P.sessions.filter(s => s.week === w);
   const bw = ss.filter(isStr), hi = ss.filter(s => s.type === 'HIIT');
   const planned = bw.reduce((a, s) => a + setsFor(s, where(who, s)).length, 0), done = bw.reduce((a, s) => a + setsDone(who, s), 0);
-  let st = 0; for (let i = 0; i < 7; i++) { const d = iso(addDays(parseISO(weekStart(w)), i)); if ((val(who, 'stretch', d, 's') || []).filter(Boolean).length === 9) st++; }
-  const rideN = rides().filter(([, r]) => { const dd = Math.floor((parseISO(r.date) - parseISO(weekStart(w))) / 864e5); return dd >= 0 && dd < 7 && (r.rider === 'Both' || (r.rider || '').toLowerCase() === who); }).length;
+  let st = 0; for (let i = 0; i < 7; i++) { const d = iso(addDays(parseISO(weekStart(w, who)), i)); if ((val(who, 'stretch', d, 's') || []).filter(Boolean).length === 9) st++; }
+  const rideN = rides().filter(([, r]) => { const dd = Math.floor((parseISO(r.date) - parseISO(weekStart(w, who))) / 864e5); return dd >= 0 && dd < 7 && (r.rider === 'Both' || (r.rider || '').toLowerCase() === who); }).length;
   return { bw: bw.filter(s => status(who, s.id) === 'Done').length, hi: hi.filter(s => status(who, s.id) === 'Done').length, pct: planned ? Math.round(done / planned * 100) : 0, st, rides: rideN };
 }
 function vProgress() {
@@ -594,7 +609,22 @@ function vProgress() {
 }
 
 /* ----- settings ----- */
-function vSettings() {
+function scheduleCard() {
+  const L = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
+  const { w } = weekInfo();
+  const doneIn = wk => P.sessions.some(x => x.week === wk && ['Done', 'Partial'].includes(status(me(), x.id)));
+  const def = Math.min(12, Math.max(2, w >= 1 && w <= 12 ? (doneIn(w) ? w + 1 : w) : 2));
+  const pushes = []; for (let k = 2; k <= 12; k++) if (pushAt(me(), k)) pushes.push(k);
+  return `<div class="card" id="schedCard"><h3>My schedule</h3>
+   <label class="f">My start date (Monday of week 1)</label><input type="date" id="sStart" value="${startISO()}">
+   <div class="sub">Week 1 starts ${fmt(startISO(), L)} · finishes ${fmt(progEnd(), L)}. Any date you pick moves to that week's Monday. Only your own dates change.</div>
+   ${pushes.map(k => `<div class="row mt"><div class="grow">⏸ ${pushAt(me(), k)} week${pushAt(me(), k) > 1 ? 's' : ''} pushed back before week ${k} <span class="sub">(week ${k} now starts ${fmt(weekStart(k))})</span></div><button class="btn small sec" data-unpush="${k}">Undo</button></div>`).join('')}
+   <label class="f mt">Missed a week? Push back 1 week, starting from</label>
+   <div class="grid2"><select id="sPushW">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(k => `<option value="${k}" ${k === def ? 'selected' : ''}>Week ${k} (${fmt(weekStart(k), { month: 'short', day: 'numeric' })})</option>`).join('')}</select>
+   <button class="btn small sec" id="sPush">Push back 1 week</button></div>
+   <div class="sub">That week and everything after it move one week later, keeping the Mon–Sun layout. Sessions you've already done keep their dates. To move week 1, change your start date.</div></div>`;
+}
+function vSettings(a) {
   view().innerHTML = `<h1>Settings</h1><div class="card">
    <label class="f">Who is using this phone?</label><select id="sMe"><option value="">Choose…</option>${['lynn', 'jarom'].map(p => `<option value="${p}" ${cfg.me === p ? 'selected' : ''}>${cap(p)}</option>`).join('')}</select>
    <label class="f">My default track for strength sessions</label><select id="sTrack">${['Home', 'Gym'].map(x => `<option ${(cfg.me ? defTrack(cfg.me) : 'Home') === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
@@ -606,6 +636,7 @@ function vSettings() {
    <details class="mt"><summary class="sub">Advanced</summary><label class="f">API base URL</label><input id="sApi" autocapitalize="off" value="${esc(cfg.api)}"></details>
    <button class="btn block" id="sSave">Save & sync</button></div>
    ${configured() && P ? stravaSettings() : ''}
+   ${configured() && P ? scheduleCard() : ''}
    <div class="card"><h3>Programme</h3>
    <p class="sub">Intro video: 10 common questions from people following the programme.</p>
    <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a></div>
@@ -622,6 +653,9 @@ function vSettings() {
     if (defTrack(cfg.me) !== $('#sTrack').value || !val(cfg.me, 'settings', 'main', 'defaultTrack')) setVal(cfg.me, 'settings', 'main', 'defaultTrack', $('#sTrack').value);
     try { await loadProgram(); prep(); await syncNow(true); location.hash = '#today'; render(); } catch (e) { toast(e.message); syncState.err = e.message; paintSync(); }
   };
+  if ($('#sStart')) $('#sStart').onchange = e => { if (e.target.value) { setVal(me(), 'settings', 'main', 'startDate', monday(e.target.value)); toast('Start date: ' + fmt(monday(e.target.value))); render(); } };
+  if ($('#sPush')) $('#sPush').onclick = () => { const k = +$('#sPushW').value; setVal(me(), 'settings', 'main', 'push' + k, pushAt(me(), k) + 1); toast(`Week ${k} onward pushed back a week`); render(); };
+  if (a === 'schedule') setTimeout(() => $('#schedCard')?.scrollIntoView({ block: 'start' }), 50);
   if ($('#sGarmin')) $('#sGarmin').onchange = e => setVal(me(), 'settings', 'main', 'garmin', e.target.checked);
   if ($('#sStravaOff')) $('#sStravaOff').onclick = () => { if (confirm('Disconnect Strava? Activities already on Strava stay there.')) { setVal(me(), 'settings', 'main', 'stravaDisconnect', Date.now()); stravaKick('disconnect'); render(); } };
   if ($('#sCodeGo')) $('#sCodeGo').onclick = () => {
@@ -663,6 +697,8 @@ document.addEventListener('click', e => {
     const id = t.dataset.finish; setVal(me(), 'sessions', id, 'status', 'Done'); autoDate(id); toast('Nice work! 💪');
     if (stravaAthlete()) stravaKick('finish');
     location.hash = '#today';
+  } else if (t.dataset.unpush) {
+    const k = +t.dataset.unpush; setVal(me(), 'settings', 'main', 'push' + k, pushAt(me(), k) - 1 || null); render();
   } else if (t.dataset.spost) {
     stravaReq(t.dataset.spost, 'post'); toast('Sending to Strava…'); softRender();
   } else if (t.dataset.sskip) {
