@@ -98,3 +98,12 @@ td.me{color:var(--acc2)}td.pt{color:var(--jarom)}
 .stravabox h3{color:#fc7a42}
 .stag{color:#fc7a42;font-weight:700}
 #schedCard{scroll-margin-top:72px}
+nav#tabs a{font-size:12px;padding:12px 1px}
+.goalq{font-size:14px;color:var(--txt);font-weight:700;margin-top:0}
+.mini{display:grid;grid-template-columns:24px 1fr 46px;gap:4px 6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.mini:last-child{border-bottom:0}
+.mini .n{font-weight:800;color:var(--mute);text-align:center;grid-row:1 / span 2}
+.mini input{padding:9px 8px;grid-column:2}
+.mini input[type=date]{font-size:14px;padding:6px 8px;color:var(--mute)}
+.mini .done{grid-column:3;grid-row:1 / span 2;height:100%;min-height:40px}
+textarea[disabled],input[disabled],select[disabled]{opacity:.85;color:var(--txt)}

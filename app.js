@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.7.0';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -327,7 +327,7 @@ function render() {
   const [r, a] = (location.hash.slice(1) || 'today').split('/');
   document.querySelectorAll('#tabs a').forEach(x => x.classList.toggle('on', x.dataset.tab === r || (r === 'session' || r === 'hiit') && x.dataset.tab === 'week'));
   if (!configured() || !P) { if (r !== 'settings') return vSetup(); }
-  const v = { today: vToday, week: vWeek, session: vSession, hiit: vHiit, stretch: vStretch, rides: vRides, ride: vRide, progress: vProgress, settings: vSettings }[r] || vToday;
+  const v = { today: vToday, week: vWeek, session: vSession, hiit: vHiit, stretch: vStretch, rides: vRides, ride: vRide, progress: vProgress, goals: vGoals, settings: vSettings }[r] || vToday;
   v(a);
 }
 function softRender() {
@@ -589,6 +589,42 @@ function vRide(id) {
    <a class="btn block" href="#rides">Save</a><button class="btn block danger" data-delride="${id}">Delete ride</button></div>`;
 }
 
+/* ----- goals (booklet pp. 6-13: SMART goal setting sheet) - synced with the Excel Goals tab ----- */
+const GOAL_QS = [
+  ['q1', 'What do you want to achieve with your mountain biking?', 'e.g. "Under 3 minutes on my local Strava hill climb before my birthday on 4 August" - specific, measurable, with a date.'],
+  ['q2', 'Why do you want to achieve this?', 'Be as detailed as possible - "because I want to feel fit" doesn\'t cut it. Go deeper.'],
+  ['q3', 'When you achieve your goal, how will it make you feel?', 'The more you can visualise achieving it, the better.'],
+  ['q4', "If you don't achieve it, what will the consequences be?", 'How will it negatively affect you and your life? How would that feel?'],
+  ['q5', 'Right now, where do you feel you are in relation to your goal?', ''],
+  ['q6', 'Detail the steps you need to take to achieve your goal.', ''],
+  ['q7', 'What are potential stumbling blocks that could halt or hinder your progress?', 'Maybe times in the past when you did well and fell off the wagon?'],
+  ['q8', "How can you solve these stumbling blocks so they don't stop your progress?", ''],
+  ['q9', 'Out of 10, how much effort are you willing to put in?', '']];
+const N_MINI = 6;
+function vGoals(a) {
+  const who = a === 'partner' && partner() ? partner() : me(); const mine = who === me();
+  const g = f => val(who, 'goals', 'main', f); const k = f => `${who}|goals|main|${f}`;
+  const ro = mine ? '' : 'disabled';
+  let html = `<h1>🎯 Goals</h1>
+   ${partner() ? `<div class="seg"><button data-goalswho="" class="${mine ? 'on' : ''}">Mine</button><button data-goalswho="partner" class="${mine ? '' : 'on'}">${cap(partner())}'s</button></div>` : ''}
+   ${mine ? `<div class="card sub">Set <b>SMART</b> goals: Specific, Meaningful, Achievable, Rewarding, Time based (booklet pp. 6-13). Pick a time when you're in a great mood, put some music on, and answer honestly and in detail. Saved as you go, and synced with the Goals tab in Excel.</div>` : ''}
+   <div class="card"><label class="f"><b>Goal deadline</b> - the date you'll achieve it by</label><input type="date" ${ro} data-f="${k('deadline')}" value="${esc(g('deadline') || '')}">
+   ${g('deadline') ? `<div class="sub mt">${Math.round((parseISO(g('deadline')) - parseISO(todayISO())) / 864e5)} days to go</div>` : ''}</div>`;
+  for (const [q, text, hint] of GOAL_QS) {
+    html += `<div class="card"><label class="f goalq">${q.slice(1)}. ${esc(text)}</label>${hint && mine ? `<div class="sub">${esc(hint)}</div>` : ''}` +
+      (q === 'q9' ? selectHtml(k(q), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], g(q), '–') .replace('<select', `<select ${ro}`)
+        : `<textarea ${ro} rows="3" data-f="${k(q)}" placeholder="${mine ? 'Your answer' : ''}">${esc(g(q) || '')}</textarea>`) + `</div>`;
+  }
+  html += `<h2>Mini goals</h2><div class="sub">Break your big goal into steps and tick them off as you go.</div><div class="card">`;
+  for (let j = 1; j <= N_MINI; j++) {
+    const mk = f => `${who}|goals|m${j}|${f}`; const mv = f => val(who, 'goals', 'm' + j, f);
+    html += `<div class="mini"><div class="n">${j}</div><input ${ro} data-f="${mk('text')}" placeholder="${mine ? 'Mini goal' : ''}" value="${esc(mv('text') || '')}">
+      <input ${ro} type="date" data-f="${mk('by')}" value="${esc(mv('by') || '')}">
+      <button class="done ${mv('done') ? 'on' : ''}" ${ro} data-goaldone="${j}">✓</button></div>`;
+  }
+  view().innerHTML = html + `</div>`;
+}
+
 /* ----- progress ----- */
 function weekStats(who, w) {
   const ss = P.sessions.filter(s => s.week === w);
@@ -674,7 +710,7 @@ document.addEventListener('change', e => {
   const [file_, coll, key, field] = f.split('|');
   let v = el.value.trim();
   if (el.hasAttribute('data-num') && v !== '') { const n = Number(v.replace(',', '.')); v = isNaN(n) ? v : n; }
-  if (field === 'rpe' && v !== '') v = Number(v);
+  if ((field === 'rpe' || field === 'q9') && v !== '') v = Number(v);
   if (coll === 'rides') saveRideDraft(key);   // first entry on a new ride saves its date + rider too
   setVal(file_, coll, key, field, v === '' ? null : v);
   if ((coll === 'sets' || coll === 'gsets') && v !== '' && v !== null && field !== 'band') autoDate(key.split('-').slice(0, 2).join('-'));
@@ -697,6 +733,10 @@ document.addEventListener('click', e => {
     const id = t.dataset.finish; setVal(me(), 'sessions', id, 'status', 'Done'); autoDate(id); toast('Nice work! 💪');
     if (stravaAthlete()) stravaKick('finish');
     location.hash = '#today';
+  } else if (t.dataset.goaldone) {
+    const j = t.dataset.goaldone; const on = !val(me(), 'goals', 'm' + j, 'done'); setVal(me(), 'goals', 'm' + j, 'done', on ? true : null); t.classList.toggle('on', on); if (on) vib(40);
+  } else if (t.dataset.goalswho !== undefined) {
+    location.hash = '#goals' + (t.dataset.goalswho ? '/' + t.dataset.goalswho : '');
   } else if (t.dataset.unpush) {
     const k = +t.dataset.unpush; setVal(me(), 'settings', 'main', 'push' + k, pushAt(me(), k) - 1 || null); render();
   } else if (t.dataset.spost) {
@@ -724,6 +764,10 @@ function autoDate(sid) {   // first thing you log in a session stamps YOUR date 
   setVal(me(), 'sessions', sid, 'dateDone', d);
   const i = document.querySelector(`[data-f="${me()}|sessions|${sid}|dateDone"]`); if (i) i.value = d;
 }
+// long answers (goals, notes): save while typing, and when the app is put away, not only when the box loses focus
+let typeT = null;
+document.addEventListener('input', e => { const el = e.target; if (el.tagName !== 'TEXTAREA' || !el.dataset.f) return; clearTimeout(typeT); typeT = setTimeout(() => el.dispatchEvent(new Event('change', { bubbles: true })), 1000); });
+document.addEventListener('visibilitychange', () => { const el = document.activeElement; if (document.visibilityState === 'hidden' && el?.dataset?.f) el.dispatchEvent(new Event('change', { bubbles: true })); });
 $('#syncBtn').onclick = () => syncNow(true);
 addEventListener('hashchange', () => { scrollTo(0, 0); render(); });
 addEventListener('online', () => scheduleSync(500));
