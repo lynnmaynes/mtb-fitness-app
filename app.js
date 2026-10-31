@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.8.0';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -464,7 +464,9 @@ function vHiit(id) {
   <h1>HIIT ${s.n} · ${esc(iv.focus)}</h1><div class="sub">Week ${s.week} · suggested ${fmt(sessDate(s))}</div>
   <div class="card"><b>${iv.reps} × ${iv.work_sec}s work / ${iv.rest_sec}s rest</b> · target ${esc(iv.target_rpm)} (bike)<div class="sub mt">${esc(iv.how_to)}</div>
   <div class="sub">On the elliptical, match the effort and track the resistance level.</div></div>
+  ${warmPicker('hbox-' + id)}
   ${timerBox('hbox-' + id, iv.reps, iv.work_sec)}
+  ${val(me(), 'hiit', id, 'warmupMin') != null || val(me(), 'hiit', id, 'cooldownMin') != null ? `<div class="sub center mt">Last time: ${val(me(), 'hiit', id, 'warmupMin') ?? 0} min warm-up · ${val(me(), 'hiit', id, 'cooldownMin') ?? 0} min cool-down</div>` : ''}
   <div class="card">
    <div class="grid2"><div><label class="f">My date done</label><input type="date" data-f="${me()}|sessions|${id}|dateDone" value="${esc(myDate(me(), id))}"></div>
    <div><label class="f">My status</label>${selectHtml(`${me()}|sessions|${id}|status`, P.status_options, status(me(), id))}</div></div>
@@ -480,8 +482,17 @@ function vHiit(id) {
    <label class="f">Notes (shared)</label><textarea data-f="shared|hiit|${id}|notes">${esc(val('shared', 'hiit', id, 'notes') || '')}</textarea>
    ${pr ? `<div class="partner ${pt} mt">${cap(pt)}: ${esc(pr.machine || '')} ${pr.intervals != null ? pr.intervals + '/' + iv.reps + ' intervals' : ''} ${pr.avgHr ? '· avg HR ' + pr.avgHr : ''}</div>` : ''}
    <button class="btn block" data-finish="${id}">Finish HIIT ✓</button></div>${stravaStatus(id)}`;
-  TCFG['hbox-' + id] = { reps: iv.reps, work: iv.work_sec, rest: iv.rest_sec,
-    onEnd: done => { const cur = val(me(), 'hiit', id, 'intervals'); if (done && (cur == null || cur < done)) setVal(me(), 'hiit', id, 'intervals', done); const c = $('#hcomp'); if (c) c.value = val(me(), 'hiit', id, 'intervals') ?? ''; } };
+  const saveIntervals = done => { const cur = val(me(), 'hiit', id, 'intervals'); if (done && (cur == null || cur < done)) setVal(me(), 'hiit', id, 'intervals', done); const c = $('#hcomp'); if (c) c.value = val(me(), 'hiit', id, 'intervals') ?? ''; };
+  TCFG['hbox-' + id] = { reps: iv.reps, work: iv.work_sec, rest: iv.rest_sec, warm: true, cool: COOLDOWN_SEC,
+    onLastWork: saveIntervals,   // recorded the moment the last interval ends, not after the cool-down
+    onEnd: (done, t) => {
+      saveIntervals(done);
+      if (t.warmSec || t.coolSec) { setVal(me(), 'hiit', id, 'warmupMin', Math.round(t.warmSec / 60)); setVal(me(), 'hiit', id, 'cooldownMin', Math.round(t.coolSec / 60)); }
+      if (val(me(), 'hiit', id, 'totalTime') == null && t.activeSec >= 60) {   // fill "My total time" from the timer, only if empty
+        setVal(me(), 'hiit', id, 'totalTime', Math.round(t.activeSec / 60));
+        const i = document.querySelector(`[data-f="${me()}|hiit|${id}|totalTime"]`); if (i) i.value = val(me(), 'hiit', id, 'totalTime');
+      }
+    } };
   paintT();
 }
 const clock = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
@@ -489,27 +500,47 @@ const clock = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)
 /* ----- interval timer (HIIT + gym bike sprints) -----
  * Clock-based: phases end at absolute times, so the timer stays correct even if the phone
  * sleeps or the browser throttles it - when you come back it catches up to the right phase. */
-const TCFG = {};   // box id -> {reps, work, rest, onWork(i), onEnd(completed)}
+const TCFG = {};   // box id -> {reps, work, rest, warm?, cool?, onWork(i), onLastWork(n), onEnd(completed, times)}
+const COOLDOWN_SEC = 300;                                  // fixed 5-minute cool-down after the last HIIT interval
+const warmMin = () => val(me(), 'settings', 'main', 'warmupMin') ?? 3;   // remembered per person; 3 min the first time
+function warmPicker(box) {
+  if (T && !T.done && T.box === box) return '';
+  const cur = warmMin();
+  return `<div class="card"><label class="f">Warm-up before the first interval</label>
+   <div class="seg wseg">${[0, 1, 2, 3, 4, 5].map(n => `<button data-warm="${n}" class="${cur === n ? 'on' : ''}">${n ? n + ' min' : 'Skip'}</button>`).join('')}</div>
+   <div class="sub mt">You can cut it short any time. A 5-minute cool-down follows the last interval (skippable).</div></div>`;
+}
 let T = null;
 function timerBox(box, reps, work) {
   return `<div class="hiitbox" id="${box}"><div class="phase">READY</div><div class="big">${clock(work)}</div>
    <div class="center sub rep">Interval 0 of ${reps}</div>
-   <div class="grid3 mt"><button class="btn" data-tstart="${box}">Start</button><button class="btn sec" data-tpause="${box}">Pause</button><button class="btn sec" data-tstop="${box}">Stop</button></div></div>`;
+   <div class="grid3 mt"><button class="btn" data-tstart="${box}">Start</button><button class="btn sec" data-tpause="${box}">Pause</button><button class="btn sec" data-tstop="${box}">Stop</button></div>
+   <button class="btn block tskip" data-tskip="${box}" hidden></button></div>`;
 }
 function startT(box) {
   const c = TCFG[box]; if (!c) return;
   if (T && !T.done) { if (T.box !== box) toast('Another timer is running'); return; }
-  T = { box, ...c, rep: 1, phase: 'WORK', end: Date.now() + c.work * 1000, paused: 0, done: false, completed: 0, lastBeep: -1 };
+  const now = Date.now(); const warm = c.warm ? warmMin() * 60 : 0;
+  T = { box, ...c, rep: warm ? 0 : 1, phase: warm ? 'WARMUP' : 'WORK', end: now + (warm || c.work) * 1000, paused: 0, done: false, completed: 0, lastBeep: -1,
+        t0: now, pausedMs: 0, pausedAt: 0, warmStart: now, warmSec: 0, coolStart: 0, coolSec: 0 };
   beep(880, .25); vib(300); wake(true);
+  const pk = document.querySelector('.wseg'); if (pk) pk.closest('.card').remove();
   T.iv = setInterval(tickT, 200); paintT();
 }
 function tickT() {
   if (!T || T.done || T.paused) return;
   while (Date.now() >= T.end && !T.done) {
-    if (T.phase === 'WORK') {
+    if (T.phase === 'WARMUP') {
+      T.warmSec = (T.end - T.warmStart - T.pausedMs) / 1000;
+      T.rep = 1; T.phase = 'WORK'; T.end += T.work * 1000; beep(880, .4); vib(400);
+    } else if (T.phase === 'WORK') {
       T.completed = T.rep; T.onWork?.(T.rep);
-      if (T.rep >= T.reps) { endT(false); return; }
-      T.phase = 'REST'; T.end += T.rest * 1000; beep(440, .4); vib([200, 100, 200]);
+      if (T.rep >= T.reps) {
+        T.onLastWork?.(T.completed);
+        if (!T.cool) { endT(false); return; }
+        T.phase = 'COOLDOWN'; T.coolStart = T.end; T.end += T.cool * 1000; beep(1000, .5); vib([300, 100, 300]);
+      } else { T.phase = 'REST'; T.end += T.rest * 1000; beep(440, .4); vib([200, 100, 200]); }
+    } else if (T.phase === 'COOLDOWN') { T.coolSec = T.cool; T.end = T.coolStart + T.cool * 1000; endT(false); return;
     } else { T.rep++; T.phase = 'WORK'; T.end += T.work * 1000; beep(880, .4); vib(400); }
     T.lastBeep = -1;
   }
@@ -519,21 +550,36 @@ function tickT() {
 }
 function pauseT(box) {
   if (!T || T.done || T.box !== box) return;
-  if (T.paused) { T.end = Date.now() + T.paused; T.paused = 0; } else T.paused = Math.max(1, T.end - Date.now());
+  if (T.paused) { T.end = Date.now() + T.paused; T.paused = 0; T.pausedMs += Date.now() - T.pausedAt; } else { T.paused = Math.max(1, T.end - Date.now()); T.pausedAt = Date.now(); }
   paintT();
 }
+function skipT(box) {   // warm-up: 3-2-1 lead-in to the first interval; cool-down: finish now
+  if (!T || T.done || T.box !== box) return;
+  if (T.paused) pauseT(box);
+  if (T.phase === 'WARMUP') { const lead = Date.now() + 3000; if (T.end > lead) T.end = lead; T.lastBeep = -1; tickT(); }
+  else if (T.phase === 'COOLDOWN') { T.coolSec = (Date.now() - T.coolStart) / 1000; endT(false); }
+}
 function endT(stopped) {
-  if (!T || T.done) return; clearInterval(T.iv); T.done = true; T.phase = stopped ? 'STOPPED' : 'DONE'; wake(false);
+  if (!T || T.done) return; clearInterval(T.iv);
+  const now = Date.now(); if (T.paused) T.pausedMs += now - T.pausedAt;
+  if (T.phase === 'WARMUP') T.warmSec = (now - T.warmStart - T.pausedMs) / 1000;
+  if (T.phase === 'COOLDOWN' && stopped) T.coolSec = (now - T.coolStart) / 1000;
+  const activeSec = Math.max(0, (Math.min(now, T.phase === 'COOLDOWN' && !stopped ? T.coolStart + T.coolSec * 1000 : now) - T.t0 - T.pausedMs) / 1000);
+  T.done = true; T.phase = stopped ? 'STOPPED' : 'DONE'; wake(false);
   if (!stopped) { beep(1000, .6); vib([300, 100, 300, 100, 600]); }
-  T.onEnd?.(T.completed); paintT();
+  T.onEnd?.(T.completed, { warmSec: T.warmSec, coolSec: T.coolSec, activeSec }); paintT();
 }
 function paintT() {
   if (!T) return; const box = document.getElementById(T.box); if (!box) return;
   const left = T.done ? 0 : T.paused ? T.paused / 1000 : (T.end - Date.now()) / 1000;
   box.className = 'hiitbox ' + T.phase;
-  const ph = box.querySelector('.phase'); ph.className = 'phase ' + T.phase; ph.textContent = T.phase === 'DONE' ? 'DONE 🎉' : T.paused ? 'PAUSED' : T.phase;
+  const ph = box.querySelector('.phase'); ph.className = 'phase ' + T.phase;
+  ph.textContent = T.phase === 'DONE' ? 'DONE 🎉' : T.paused ? 'PAUSED' : { WARMUP: 'WARM-UP', COOLDOWN: 'COOL-DOWN' }[T.phase] || T.phase;
   box.querySelector('.big').textContent = clock(left);
-  box.querySelector('.rep').textContent = `Interval ${T.done ? T.completed : T.rep} of ${T.reps}`;
+  box.querySelector('.rep').textContent = T.phase === 'WARMUP' ? `Easy spin · then ${T.reps} intervals` : T.phase === 'COOLDOWN' ? `All ${T.reps} intervals done · easy spin` : `Interval ${T.done ? T.completed : T.rep} of ${T.reps}`;
+  const sk = box.querySelector('[data-tskip]');
+  if (sk) { const lead = T.phase === 'WARMUP' && T.end - Date.now() <= 3100; sk.hidden = T.done || !['WARMUP', 'COOLDOWN'].includes(T.phase) || lead;
+    sk.textContent = T.phase === 'WARMUP' ? "I'm warm - start intervals ▶" : 'Skip cool-down'; }
   box.querySelector('[data-tpause]').textContent = T.paused ? 'Resume' : 'Pause';
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tickT(); });
@@ -725,6 +771,9 @@ document.addEventListener('click', e => {
   } else if (t.dataset.where) {
     const [sid, tr] = t.dataset.where.split('|'); setVal(me(), 'sessions', sid, 'where', tr); render();
   } else if (t.dataset.tstart) { startT(t.dataset.tstart);
+  } else if (t.dataset.tskip) { skipT(t.dataset.tskip);
+  } else if (t.dataset.warm !== undefined) {
+    setVal(me(), 'settings', 'main', 'warmupMin', +t.dataset.warm); t.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === t));
   } else if (t.dataset.tpause) { pauseT(t.dataset.tpause);
   } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop) endT(true);
   } else if (t.dataset.introdone) {

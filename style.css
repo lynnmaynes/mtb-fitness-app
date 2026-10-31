@@ -107,3 +107,8 @@ nav#tabs a{font-size:12px;padding:12px 1px}
 .mini input[type=date]{font-size:14px;padding:6px 8px;color:var(--mute)}
 .mini .done{grid-column:3;grid-row:1 / span 2;height:100%;min-height:40px}
 textarea[disabled],input[disabled],select[disabled]{opacity:.85;color:var(--txt)}
+.hiitbox.WARMUP{background:#123222}.hiitbox.COOLDOWN{background:#1b2440}
+.phase.WARMUP{color:#4cd07d}.phase.COOLDOWN{color:#8fb3ff}
+.wseg button{font-size:14px;padding:9px 2px}
+.tskip{margin-top:10px;background:#2b6e45}
+[hidden]{display:none!important}
