@@ -1,15 +1,15 @@
-/* MTB Fitness 12-Week Home Programme - phone app (PWA)
+/* MTB Fitness 12-Week Home Program - phone app (PWA)
  * Data lives in a private GitHub repo:  program.json, data/<person>.json, data/shared.json
  * Every record keeps a per-field timestamp map (_t) so phones and the PC sync script
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.8.1';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
   return `<div class="card intro"><h3>▶ Start here: watch the intro video</h3>
-    <p class="sub">It answers the 10 most common questions from people following the programme.</p>
+    <p class="sub">It answers the 10 most common questions from people following the program.</p>
     <a class="btn block" href="${INTRO_VIDEO}" target="_blank" rel="noopener">Watch on YouTube</a>
     ${full ? '' : `<button class="btn block sec small" data-introdone="1">I've watched it - hide this</button>`}</div>`;
 }
@@ -319,7 +319,7 @@ const view = () => $('#view');
 function header() {
   if (!P) { $('#weekInfo').innerHTML = ''; return; }
   const { w, brk } = weekInfo(); const s = P.sessions.find(x => x.week === clampW(w));
-  $('#weekInfo').innerHTML = w === 0 ? `<b>${cap(me())}</b>` : w > 12 ? `<b>Programme complete</b><br>${cap(me())}` :
+  $('#weekInfo').innerHTML = w === 0 ? `<b>${cap(me())}</b>` : w > 12 ? `<b>Program complete</b><br>${cap(me())}` :
     brk ? `<b>Break week</b><br>Week ${w} next · ${cap(me())}` : `<b>Week ${w}</b> · ${esc(s.phase)}<br>${esc(s.block)} · ${cap(me())}`;
 }
 function render() {
@@ -338,7 +338,7 @@ function softRender() {
 
 function vSetup() {
   view().innerHTML = `<h1>Welcome 👋</h1>
-  <div class="card"><p>This app logs the MTB Fitness 12-week programme (home or gym) for <b>Lynn</b> and <b>Jarom</b> and keeps both phones and the Excel tracker in sync through your private GitHub repo.</p>
+  <div class="card"><p>This app logs the MTB Fitness 12-week program (home or gym) for <b>Lynn</b> and <b>Jarom</b> and keeps both phones and the Excel tracker in sync through your private GitHub repo.</p>
   <p class="sub">See <b>SETUP.md</b> in the MTB Fitness folder for the one-time steps (create the repo, run the PC sync with --init, make a token).</p>
   <a class="btn block" href="#settings">Set up this phone</a></div>`;
 }
@@ -363,7 +363,7 @@ function vToday() {
   let html = `<h1>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h1>`;
   if (!val(me(), 'settings', 'main', 'introWatched')) html += introCard(false);
   html += stravaPrompts();
-  if (w === 0) html += `<div class="card">Your programme starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.
+  if (w === 0) html += `<div class="card">Your program starts <b>${fmt(startISO(), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</b> (${Math.ceil((parseISO(startISO()) - parseISO(t)) / 864e5)} days). Preview week 1 below.
     <div class="mt"><a href="#settings/schedule">Change my start date</a></div></div>`;
   if (brk) html += `<div class="card"><h3>Break week 🌴</h3><div class="sub">You pushed your schedule back. Week ${w} starts ${fmt(weekStart(w), { weekday: 'long', month: 'short', day: 'numeric' })}.</div></div>`;
   if (w > 12) html += `<div class="card">🎉 12 weeks done. Check <a href="#progress">Progress</a>.</div>`;
@@ -719,12 +719,12 @@ function vSettings(a) {
    <button class="btn block" id="sSave">Save & sync</button></div>
    ${configured() && P ? stravaSettings() : ''}
    ${configured() && P ? scheduleCard() : ''}
-   <div class="card"><h3>Programme</h3>
-   <p class="sub">Intro video: 10 common questions from people following the programme.</p>
+   <div class="card"><h3>Program</h3>
+   <p class="sub">Intro video: 10 common questions from people following the program.</p>
    <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a></div>
    <div class="card"><h3>Data</h3>
    <div class="sub">Last sync: ${syncState.last ? new Date(syncState.last).toLocaleString() : 'never'}${syncState.err ? `<br><span style="color:var(--bad)">${esc(syncState.err)}</span>` : ''}</div>
-   <button class="btn block sec" id="sProg">Reload programme from repo</button>
+   <button class="btn block sec" id="sProg">Reload program from repo</button>
    <button class="btn block sec" id="sExport">Download backup (JSON)</button>
    <button class="btn block danger" id="sReset">Clear data on this phone</button>
    <p class="sub mt">The Excel tracker updates when the PC runs <b>Sync Tracker.bat</b>. App v${APP_VERSION}</p></div>`;
@@ -745,7 +745,7 @@ function vSettings(a) {
     if (t.includes('code=')) { const u = new URLSearchParams(t.slice(t.indexOf('?') + 1)); t = u.get('code') + '|' + (u.get('scope') || ''); }
     const [c, sc] = t.split('|'); if (stravaAcceptCode(c, sc)) render();
   };
-  $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Programme reloaded'); render(); } catch (e) { toast(e.message); } };
+  $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Program reloaded'); render(); } catch (e) { toast(e.message); } };
   $('#sExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: D }, null, 1)], { type: 'application/json' })); a.download = `mtb-backup-${todayISO()}.json`; a.click(); };
   $('#sReset').onclick = () => { if (confirm('Remove all data stored on this phone? (Data already synced to GitHub stays there.)')) { localStorage.removeItem('mtb.data'); localStorage.removeItem('mtb.shas'); D = {}; shas = {}; toast('Cleared - syncing'); syncNow(); } };
 }

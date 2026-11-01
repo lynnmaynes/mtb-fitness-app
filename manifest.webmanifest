@@ -1,7 +1,7 @@
 {
   "name": "MTB Fitness 12-Week",
   "short_name": "MTB 12",
-  "description": "Lynn & Jarom's MTB Fitness 12-week programme tracker",
+  "description": "Lynn & Jarom's MTB Fitness 12-week program tracker",
   "start_url": "./#today",
   "scope": "./",
   "display": "standalone",
