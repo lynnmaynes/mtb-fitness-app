@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.10.0';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -317,30 +317,127 @@ const restTxt = s => !s ? 'none' : ((s >= 60 ? Math.floor(s / 60) + 'm' : '') + 
 // Book method: exercises with the same letter are done back-to-back as one round (0w = no rest), then rest for the time
 // printed on the last one, then back to the first for the next round. The rest timer follows this unless ⚙ overrides it.
 const grpOf = (pl, pe) => pl.exercises.filter(e => e.group === pe.group);
-function restInfo(pl, pe) {
+const gymCircuit = pl => /Metabolic/.test(pl.kind || '');
+// Home and gym circuits always run in rounds; gym Plan 1 / Plan 2 can switch to "By exercise" (remembered per person)
+function viewMode(s, t, pl) {
+  if (t !== 'Gym' || gymCircuit(pl)) return 'rounds';
+  return val(me(), 'settings', 'main', 'gymView') === 'exercise' ? 'exercise' : 'rounds';
+}
+const groupsOf = pl => { const out = []; for (const pe of pl.exercises) { const g = out[out.length - 1]; if (g && g[0].group === pe.group) g.push(pe); else out.push([pe]); } return out; };
+const gRest = g => g[g.length - 1].rest_sec;
+const PN = x => cap(x);
+const RX = {};   // focus view: rounds the person opened by hand, key "session|track|group" -> Set
+function restInfo(pl, pe, mode = 'rounds') {
   const g = grpOf(pl, pe), i = pl.exercises.indexOf(pe), nx = pl.exercises[i + 1];
+  if (g.length > 1 && mode === 'exercise') return `rest ${restTxt(gRest(g))} between sets`;
   if (!pe.rest_sec && nx) return `no rest - straight to ${nx.order}`;
   return g.length > 1 ? `rest ${restTxt(pe.rest_sec)} after each round` : `rest ${restTxt(pe.rest_sec)} between sets`;
 }
-function grpHead(pl, pe) {
+function grpHead(pl, pe) {   // "By exercise" (gym) header for a letter with 2+ exercises
   const g = grpOf(pl, pe); if (g.length < 2 || g[0] !== pe) return '';
-  const last = g[g.length - 1];
-  return `<div class="grphead"><b>${esc(pe.group)}: ${g.map(e => e.order).join(' → ')}</b> back-to-back, no rest between · rest ${restTxt(last.rest_sec)} · ${pe.sets} rounds</div>`;
+  return `<div class="grphead"><b>${esc(pe.group)}: ${g.map(e => e.order).join(', then ')}</b> · all sets of each · rest ${restTxt(gRest(g))} between sets and before the next exercise</div>`;
 }
 function planExFor(lid) {
   const m = lid.match(/^(.+?-.+?)-(G-)?([A-Z]\d?)-S(\d+)$/); if (!m) return null;
-  const s = P._sess[m[1]]; if (!s) return null;
+  const s = P._sess[m[1]]; if (!s) return null; const t = m[2] ? 'Gym' : 'Home';
   const pl = plan(m[2] ? s.gym_plan_id : s.plan_id); if (!pl) return null;
-  const i = pl.exercises.findIndex(e => e.order === m[3]); return i < 0 ? null : { pl, pe: pl.exercises[i], i, n: +m[4] };
+  const i = pl.exercises.findIndex(e => e.order === m[3]); return i < 0 ? null : { s, t, pl, pe: pl.exercises[i], i, n: +m[4] };
 }
 function restForSet(lid) {
   if (cfg.restOverride) return startRest(cfg.restOverride, 'Rest (your ⚙ setting)');
   const x = planExFor(lid); if (!x) return startRest(60);
-  const { pl, pe, i, n } = x, nx = pl.exercises[i + 1];
+  const { s, t, pl, pe, i, n } = x, nx = pl.exercises[i + 1], g = grpOf(pl, pe);
+  if (g.length > 1 && viewMode(s, t, pl) === 'exercise') return startRest(gRest(g) || 60, n < pe.sets ? `Rest → set ${n + 1}` : (nx ? `Rest → ${nx.order}` : 'Rest'));
   if (!pe.rest_sec && nx) { stopRest(); return toast(`No rest - straight to ${nx.order} ${exById(nx.exercise_id).name}`); }
-  const g = grpOf(pl, pe), more = n < pe.sets;
+  const more = n < pe.sets;
   const lbl = more ? (g.length > 1 ? `Rest → round ${n + 1} (${g[0].order})` : `Rest → set ${n + 1}`) : (nx ? `Rest → ${nx.order}` : 'Rest');
   startRest(pe.rest_sec || 60, lbl);
+}
+const shortRec = r => !r ? '–' : r.weight != null ? `${r.weight}×${r.reps ?? '–'}` : r.secs != null ? `${r.secs}s` : r.reps != null ? `${r.reps}` : (r.done ? '✓' : '–');
+const roundSum = (s, g, n, t, who) => g.map(pe => `${pe.order} ${shortRec(rec(who, COLL(t), setId(s, pe, n, t)))}`).join(' · ');
+const roundDone = (s, g, n, t) => g.every(pe => rec(me(), COLL(t), setId(s, pe, n, t))?.done);
+function roundAdvance(lid) {   // focus view: when a round is finished, fold it and open the next one
+  const x = planExFor(lid); if (!x) return; const { s, t, pl, pe, n } = x; const g = grpOf(pl, pe);
+  if (g.length < 4 || viewMode(s, t, pl) !== 'rounds' || !roundDone(s, g, n, t)) return;
+  RX[`${s.id}|${t}|${g[0].group}`]?.delete(n);
+  render(); setTimeout(() => document.getElementById('cur-' + g[0].group)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+}
+function exHead(s, pl, pe, mode, gym, inRound) {
+  const ex = exById(pe.exercise_id); const secs = pe.target_type === 'seconds';
+  const nm = ex.video_url ? `<a href="${esc(ex.video_url)}" target="_blank" rel="noopener">${esc(ex.name)}</a>` : esc(ex.name);
+  const lt = gym ? lastTime(me(), pe.exercise_id, s) : '';
+  return `<h3><span class="sub">${pe.order}</span> ${nm}</h3>
+    <div class="meta">${inRound ? '' : pe.sets + ' sets × '}<b>${esc(pe.target)}</b>${pe.per_side ? ' ' + esc(pe.per_side) : ''}${inRound ? '' : ' · ' + restInfo(pl, pe, mode)}${ex.equipment !== 'Bodyweight' ? ' · ' + esc(ex.equipment) : ''}
+    ${pe.drop_set ? '<br><b>Triple drop set:</b> log the starting weight and first-drop reps' : ''}
+    ${pe.sprint ? '<br>All-out sprint, then carry on with the round.' : ''}
+    ${secs && !pe.sprint ? `<button class="timerbtn" data-hold="${pe.target_max || 0}">⏱ ${pe.target_max ? pe.target_max + 's timer' : 'stopwatch'}</button>` : ''}</div>
+    ${lt ? `<div class="last">Last time: ${lt}</div>` : ''}`;
+}
+function setRow(s, pe, n, t, pt, ptSame, label) {
+  const gym = t === 'Gym', coll = COLL(t), secs = pe.target_type === 'seconds';
+  const lid = setId(s, pe, n, t); const k = `${me()}|${coll}|${lid}`; const r = rec(me(), coll, lid) || {};
+  const num = (f, ph) => `<input inputmode="${f === 'weight' ? 'decimal' : 'numeric'}" placeholder="${ph}" data-f="${k}|${f}" data-num value="${esc(r[f] ?? '')}">`;
+  let inputs;
+  if (pe.sprint) inputs = `<button class="timerbtn sprintbtn" data-sprint="${coll}|${lid}|${pe.target_max}">▶ ${pe.target_max}s sprint</button>${num('secs', 'secs')}`;
+  else if (gym) inputs = secs ? `<div class="span2">${num('secs', 'secs')}</div>` : num('weight', 'lb') + num('reps', 'reps');
+  else inputs = num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps') + selectHtml(`${k}|band`, P.band_options, r.band, 'band');
+  let h = `<div class="set"><div class="n">${label}</div>${inputs}<button class="done ${r.done ? 'on' : ''}" data-done="${coll}|${lid}">✓</button>`;
+  if (ptSame) {
+    const q = rec(pt, coll, lid);
+    if (q && (q.reps != null || q.secs != null || q.done || q.band || q.weight != null))
+      h += `<div class="partner ${pt}">${esc(PN(pt))}: ${q.weight != null ? q.weight + ' lb × ' : ''}${q.reps ?? (q.secs != null ? q.secs + 's' : '–')}${q.band ? ' · ' + esc(q.band) : ''}${q.done ? ' ✓' : ''}</div>`;
+  }
+  return h + `</div>`;
+}
+function roundsCard(s, t, pl, g, pt, ptSame) {
+  const N = g[0].sets, rest = gRest(g), focus = g.length >= 4, key = `${s.id}|${t}|${g[0].group}`, open = RX[key] || new Set();
+  let cur = 0; for (let n = 1; n <= N; n++) if (!roundDone(s, g, n, t)) { cur = n; break; }
+  let h = `<div class="card ex rounds"><div class="ghd"><b>${esc(g[0].group)} · ${gymCircuit(pl) && t === 'Gym' ? 'circuit · ' : ''}${N} rounds</b>
+    <div class="sub">${g.map(e => e.order).join(' → ')} back-to-back with no rest, then rest ${restTxt(rest)} and start the next round.</div></div>`;
+  h += g.map(pe => `<div class="rex">${exHead(s, pl, pe, 'rounds', t === 'Gym', true)}</div>`).join('');
+  let folded = false;
+  for (let n = 1; n <= N; n++) {
+    const done = roundDone(s, g, n, t);
+    if (focus && n !== cur && !open.has(n)) {
+      if (cur === 0 || n < cur) {
+        const ps = ptSame && g.some(pe => rec(pt, COLL(t), setId(s, pe, n, t))) ? roundSum(s, g, n, t, pt) : '';
+        h += `<button class="rsum" data-ropen="${key}|${n}"><span>Round ${n} · ${esc(roundSum(s, g, n, t, me()))}${ps ? `<br><span class="partner ${pt}">${esc(PN(pt))}: ${esc(ps)}</span>` : ''}</span><b>${done ? '✓' : ''}</b></button>`;
+      } else if (!folded) { folded = true; h += `<button class="rsum next" data-ropen="${key}|${n}">${n < N ? `Rounds ${n}–${N}` : `Round ${n}`} · tap to open</button>`; }
+      continue;
+    }
+    h += `<div class="rnd${focus && n === cur ? ' cur' : ''}"${focus && n === cur ? ` id="cur-${g[0].group}"` : ''}><div class="rt"><span>Round ${n} of ${N}</span>${done ? '<span class="okc">✓ done</span>' : ''}</div>`;
+    h += g.map(pe => setRow(s, pe, n, t, pt, ptSame, pe.order)).join('');
+    if (n < N) h += `<div class="restline">Rest ${restTxt(rest)}${focus && n === cur ? ` → round ${n + 1}` : ''}</div>`;
+    h += `</div>`;
+  }
+  return h + `</div>`;
+}
+function sessBody(s, t, pl, pt, ptSame) {
+  const mode = viewMode(s, t, pl); let h = '';
+  if (t === 'Gym' && !gymCircuit(pl)) h += `<div class="seg mt"><button data-gview="rounds" class="${mode === 'rounds' ? 'on' : ''}">Rounds</button><button data-gview="exercise" class="${mode === 'exercise' ? 'on' : ''}">By exercise</button></div>
+    <div class="sub">${mode === 'rounds' ? 'Same-letter exercises back-to-back, then rest after each round.' : "All sets of one exercise, then the next - for when the equipment isn't free or close together. Rest the printed time between sets."}</div>`;
+  for (const g of groupsOf(pl)) {
+    if (g.length > 1 && mode === 'rounds') { h += roundsCard(s, t, pl, g, pt, ptSame); continue; }
+    if (g.length > 1) h += grpHead(pl, g[0]);
+    for (const pe of g) {
+      h += `<div class="card ex">${exHead(s, pl, pe, mode, t === 'Gym', false)}`;
+      for (let n = 1; n <= pe.sets; n++) h += setRow(s, pe, n, t, pt, ptSame, n);
+      h += `</div>`;
+    }
+  }
+  return h;
+}
+function sprintRun(btn) {
+  const [coll, lid, sec] = btn.dataset.sprint.split('|');
+  if (btn._iv) { clearInterval(btn._iv); btn._iv = null; btn.textContent = `▶ ${sec}s sprint`; wake(false); return; }
+  const end = Date.now() + sec * 1000; wake(true); beep(880, .15); stopRest();
+  btn._iv = setInterval(() => {
+    const left = (end - Date.now()) / 1000; btn.textContent = `■ ${Math.ceil(Math.max(0, left))}s`;
+    if (left > 0) return;
+    clearInterval(btn._iv); btn._iv = null; beep(1000, .5); vib([300, 100, 300]); wake(false); btn.textContent = `▶ ${sec}s sprint`;
+    setVal(me(), coll, lid, 'secs', +sec); markSet(coll, lid);
+    if (!val(me(), coll, lid, 'done')) { setVal(me(), coll, lid, 'done', true); markSet(coll, lid); autoDate(lid.split('-').slice(0, 2).join('-')); restForSet(lid); roundAdvance(lid); }
+  }, 250);
 }
 let restWarned = false;
 function restOverrideWarn() {
@@ -463,36 +560,7 @@ function vSession(id) {
     <div><label class="f">My date done</label><input type="date" data-f="${me()}|sessions|${id}|dateDone" value="${esc(myDate(me(), id))}"></div>
     <div><label class="f">My status</label>${selectHtml(`${me()}|sessions|${id}|status`, P.status_options, status(me(), id))}</div>
   </div>${partnerDateNote(id)}`;
-  for (const pe of pl.exercises) {
-    const ex = exById(pe.exercise_id); const secs = pe.target_type === 'seconds';
-    const nm = ex.video_url ? `<a href="${esc(ex.video_url)}" target="_blank" rel="noopener">${esc(ex.name)}</a>` : esc(ex.name);
-    html += grpHead(pl, pe) + `<div class="card ex"><h3><span class="sub">${pe.order}</span> ${nm}</h3>
-      <div class="meta">${pe.sets} sets × <b>${esc(pe.target)}</b>${pe.per_side ? ' ' + esc(pe.per_side) : ''} · ${restInfo(pl, pe)}${ex.equipment !== 'Bodyweight' ? ' · ' + esc(ex.equipment) : ''}
-      ${pe.drop_set ? '<br><b>Triple drop set:</b> log the starting weight and first-drop reps' : ''}
-      ${secs && !pe.sprint ? `<button class="timerbtn" data-hold="${pe.target_max || 0}">⏱ ${pe.target_max ? pe.target_max + 's timer' : 'stopwatch'}</button>` : ''}</div>`;
-    if (gym) { const lt = lastTime(me(), pe.exercise_id, s); if (lt) html += `<div class="last">Last time: ${lt}</div>`; }
-    if (pe.sprint) {
-      const box = `sp-${id}-${pe.order}`; const rest = cfg.restOverride || 60;
-      TCFG[box] = { reps: pe.sets, work: pe.target_max, rest, label: 'Sprint',
-        onWork: i => { const lid = setId(s, pe, i, 'Gym'); setVal(me(), 'gsets', lid, 'secs', pe.target_max); setVal(me(), 'gsets', lid, 'done', true); autoDate(id); markSet('gsets', lid); } };
-      html += `<div class="sub">${pe.sets} × ${pe.target_max}s all-out sprint, ${rest}s easy spin between (change with the ⚙ rest override).</div>` + timerBox(box, pe.sets, pe.target_max);
-    }
-    for (let n = 1; n <= pe.sets; n++) {
-      const lid = setId(s, pe, n, t); const k = `${me()}|${coll}|${lid}`; const r = rec(me(), coll, lid) || {};
-      const num = (f, ph) => `<input inputmode="${f === 'weight' ? 'decimal' : 'numeric'}" placeholder="${ph}" data-f="${k}|${f}" data-num value="${esc(r[f] ?? '')}">`;
-      let inputs;
-      if (gym) inputs = secs ? `<div class="span2">${num('secs', 'secs')}</div>` : num('weight', 'lb') + num('reps', 'reps');
-      else inputs = num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps') + selectHtml(`${k}|band`, P.band_options, r.band, 'band');
-      html += `<div class="set"><div class="n">${n}</div>${inputs}<button class="done ${r.done ? 'on' : ''}" data-done="${coll}|${lid}">✓</button>`;
-      if (ptSame) {
-        const q = rec(pt, coll, lid);
-        if (q && (q.reps != null || q.secs != null || q.done || q.band || q.weight != null))
-          html += `<div class="partner ${pt}">${cap(pt)}: ${q.weight != null ? q.weight + ' lb × ' : ''}${q.reps ?? (q.secs != null ? q.secs + 's' : '–')}${q.band ? ' · ' + esc(q.band) : ''}${q.done ? ' ✓' : ''}</div>`;
-      }
-      html += `</div>`;
-    }
-    html += `</div>`;
-  }
+  html += sessBody(s, t, pl, pt, ptSame);
   html += `<div class="card"><div class="grid2">
     <div><label class="f">My duration (min)</label><input inputmode="numeric" data-num data-f="${me()}|sessions|${id}|duration" value="${esc(val(me(), 'sessions', id, 'duration') ?? val('shared', 'sessions', id, 'duration') ?? '')}"></div>
     <div><label class="f">My RPE (1-10)</label>${selectHtml(`${me()}|sessions|${id}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'sessions', id, 'rpe'))}</div></div>
@@ -817,7 +885,10 @@ document.addEventListener('click', e => {
   if (t.dataset.done) {
     const [coll, lid] = t.dataset.done.split('|'); const on = !val(me(), coll, lid, 'done');
     setVal(me(), coll, lid, 'done', on ? true : null); t.classList.toggle('on', on);
-    if (on) { autoDate(lid.split('-').slice(0, 2).join('-')); restForSet(lid); vib(40); }
+    if (on) { autoDate(lid.split('-').slice(0, 2).join('-')); restForSet(lid); vib(40); roundAdvance(lid); }
+  } else if (t.dataset.gview) { setVal(me(), 'settings', 'main', 'gymView', t.dataset.gview); render();
+  } else if (t.dataset.ropen) { const j = t.dataset.ropen.lastIndexOf('|'), key = t.dataset.ropen.slice(0, j); (RX[key] = RX[key] || new Set()).add(+t.dataset.ropen.slice(j + 1)); render();
+  } else if (t.dataset.sprint) { sprintRun(t);
   } else if (t.dataset.where) {
     const [sid, tr] = t.dataset.where.split('|'); setVal(me(), 'sessions', sid, 'where', tr); render();
   } else if (t.dataset.tstart) { startT(t.dataset.tstart);
