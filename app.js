@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.8.2';
+const APP_VERSION = '2.8.3';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -739,7 +739,7 @@ function vSettings(a) {
   if ($('#sPush')) $('#sPush').onclick = () => { const k = +$('#sPushW').value; setVal(me(), 'settings', 'main', 'push' + k, pushAt(me(), k) + 1); toast(`Week ${k} onward pushed back a week`); render(); };
   if (a === 'schedule') setTimeout(() => $('#schedCard')?.scrollIntoView({ block: 'start' }), 50);
   if ($('#sGarmin')) $('#sGarmin').onchange = e => setVal(me(), 'settings', 'main', 'garmin', e.target.checked);
-  if ($('#sStravaOff')) $('#sStravaOff').onclick = () => { if (confirm('Disconnect Strava? Activities already on Strava stay there.')) { setVal(me(), 'settings', 'main', 'stravaDisconnect', Date.now()); stravaKick('disconnect'); render(); } };
+  if ($('#sStravaOff')) $('#sStravaOff').onclick = () => { if (confirm('Disconnect Strava?\n\nThe app will stop adding your workouts to Strava and stop bringing in your rides. Anything already on Strava stays there.\n\nTo remove the app from your Strava account completely, open Strava → Settings → My Apps.')) { setVal(me(), 'settings', 'main', 'stravaDisconnect', Date.now()); stravaKick('disconnect'); render(); } };
   if ($('#sCodeGo')) $('#sCodeGo').onclick = () => {
     let t = $('#sCode').value.trim(); if (!t) return;
     if (t.includes('code=')) { const u = new URLSearchParams(t.slice(t.indexOf('?') + 1)); t = u.get('code') + '|' + (u.get('scope') || ''); }
