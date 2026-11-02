@@ -112,3 +112,7 @@ textarea[disabled],input[disabled],select[disabled]{opacity:.85;color:var(--txt)
 .wseg button{font-size:14px;padding:9px 2px}
 .tskip{margin-top:10px;background:#2b6e45}
 [hidden]{display:none!important}
+.grphead{margin:14px 2px -4px;font-size:13px;color:var(--mute)}.grphead b{color:var(--txt)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.modal .mbox{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;max-width:420px;width:100%}
+.modal h3{margin:0 0 8px}
