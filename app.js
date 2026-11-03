@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.10.0';
+const APP_VERSION = '2.11.0';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -381,7 +381,8 @@ function setRow(s, pe, n, t, pt, ptSame, label) {
   if (pe.sprint) inputs = `<button class="timerbtn sprintbtn" data-sprint="${coll}|${lid}|${pe.target_max}">▶ ${pe.target_max}s sprint</button>${num('secs', 'secs')}`;
   else if (gym) inputs = secs ? `<div class="span2">${num('secs', 'secs')}</div>` : num('weight', 'lb') + num('reps', 'reps');
   else inputs = num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps') + selectHtml(`${k}|band`, P.band_options, r.band, 'band');
-  let h = `<div class="set"><div class="n">${label}</div>${inputs}<button class="done ${r.done ? 'on' : ''}" data-done="${coll}|${lid}">✓</button>`;
+  const canFill = rowEmpty(r) && !r.done && fillFor(s, pe, n, t);
+  let h = `<div class="set">${canFill ? `<button class="n fill" data-fill="${coll}|${lid}" title="Fill from last time">${label}<small>↺</small></button>` : `<div class="n">${label}</div>`}${inputs}<button class="done ${r.done ? 'on' : ''}" data-done="${coll}|${lid}">✓</button>`;
   if (ptSame) {
     const q = rec(pt, coll, lid);
     if (q && (q.reps != null || q.secs != null || q.done || q.band || q.weight != null))
@@ -411,6 +412,45 @@ function roundsCard(s, t, pl, g, pt, ptSame) {
     h += `</div>`;
   }
   return h + `</div>`;
+}
+// Quick fill: last time this exercise was logged on this track (same set number if there), else the program's target
+function fillFor(s, pe, n, t) {
+  if (pe.sprint) return null;
+  const coll = COLL(t), gym = t === 'Gym', idx = P.sessions.indexOf(s);
+  const pick = r => gym ? (r.secs != null && r.weight == null ? { secs: r.secs } : { weight: r.weight ?? null, reps: r.reps ?? null })
+                        : { [r.secs != null ? 'secs' : 'reps']: r.secs ?? r.reps ?? null, band: r.band ?? null };
+  for (let i = idx - 1; i >= 0; i--) {
+    const s2 = P.sessions[i]; if (!isStr(s2)) continue;
+    const recs = setsFor(s2, t).filter(x => x.pe.exercise_id === pe.exercise_id).map(x => [x.n, rec(me(), coll, x.id)])
+      .filter(([, r]) => r && (r.weight != null || r.reps != null || r.secs != null));
+    if (recs.length) return pick((recs.find(([k]) => k === n) || recs[recs.length - 1])[1]);
+  }
+  if (pe.target_max == null) return null;
+  return pe.target_type === 'seconds' ? { secs: pe.target_max } : { reps: pe.target_max };
+}
+const rowEmpty = r => !r || (r.weight == null && r.reps == null && r.secs == null);
+function quickFill(btn) {
+  const [coll, lid] = btn.dataset.fill.split('|'); const x = planExFor(lid); const v = x && fillFor(x.s, x.pe, x.n, x.t); if (!v) return;
+  for (const [f, val_] of Object.entries(v)) { if (val_ == null) continue; setVal(me(), coll, lid, f, val_); const el = document.querySelector(`[data-f="${me()}|${coll}|${lid}|${f}"]`); if (el) el.value = val_; }
+  autoDate(lid.split('-').slice(0, 2).join('-')); btn.outerHTML = `<div class="n">${esc(btn.firstChild.textContent)}</div>`; vib(20);
+}
+const GUIDE = [
+  ['Letters are rounds', `<p>Exercises with the same letter are done <b>back-to-back</b> as one round: A1 → A2 → A3, no rest between them ("0w" in the book).</p>
+    <p>After the last one, rest the printed time, then go back to A1 for the next round. A single letter (C, E…) is just sets of one exercise.</p>
+    <div class="gex"><b>A1</b> Split squat → <b>A2</b> Press up → <span>rest 1m 30s</span> → round 2…</div>`],
+  ['The rest timer does it for you', `<p>Tap <b>✓</b> after each exercise. After a 0w exercise there's no timer, just a note naming the next one. After the last one in a round, the rest timer starts with the program's time.</p>
+    <p><b>At the gym</b>, if equipment isn't free or close together, switch to <b>By exercise</b>: all sets of one exercise, resting the printed time between sets.</p>`],
+  ['Logging is quick', `<p>Tap the <b>row label</b> with ↺ (A1, A2… or the set number) to fill in your numbers from last time, or the program's target the first time. Change only what's different, then tap ✓.</p>
+    <p>Exercises in seconds have a ⏱ timer, circuits have a ▶ sprint button, and <b>Finish workout</b> at the bottom wraps it up.</p>`]];
+function showGuide(force) {
+  if (!force && LS.get('guideSeen', false)) return false;
+  LS.set('guideSeen', true); let i = 0;
+  const m = document.createElement('div'); m.className = 'modal';
+  const paint = () => { m.innerHTML = `<div class="mbox guide"><div class="sub">How the workouts work · ${i + 1} of ${GUIDE.length}</div><h3>${GUIDE[i][0]}</h3>${GUIDE[i][1]}
+    <div class="row mt">${i ? '<button class="btn sec small" id="gBack">Back</button>' : ''}<div class="grow"></div><button class="btn small" id="gNext">${i < GUIDE.length - 1 ? 'Next' : 'Got it'}</button></div></div>`;
+    m.querySelector('#gNext').onclick = () => { if (i < GUIDE.length - 1) { i++; paint(); } else m.remove(); };
+    if (m.querySelector('#gBack')) m.querySelector('#gBack').onclick = () => { i--; paint(); }; };
+  paint(); document.body.appendChild(m); return true;
 }
 function sessBody(s, t, pl, pt, ptSame) {
   const mode = viewMode(s, t, pl); let h = '';
@@ -566,7 +606,7 @@ function vSession(id) {
     <div><label class="f">My RPE (1-10)</label>${selectHtml(`${me()}|sessions|${id}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'sessions', id, 'rpe'))}</div></div>
     <label class="f">Session notes (shared)</label><textarea data-f="shared|sessions|${id}|notes">${esc(val('shared', 'sessions', id, 'notes') || '')}</textarea>
     <button class="btn block" data-finish="${id}">Finish workout ✓</button></div>${stravaStatus(id)}`;
-  view().innerHTML = html; paintT(); restOverrideWarn();
+  view().innerHTML = html; paintT(); if (!showGuide()) restOverrideWarn();
 }
 function markSet(coll, lid) { const b = document.querySelector(`[data-done="${coll}|${lid}"]`); if (b) b.classList.add('on'); const i = document.querySelector(`[data-f="${me()}|${coll}|${lid}|secs"]`); if (i) i.value = val(me(), coll, lid, 'secs') ?? ''; }
 function selectHtml(key, opts, cur, ph) {
@@ -839,7 +879,8 @@ function vSettings(a) {
    ${configured() && P ? scheduleCard() : ''}
    <div class="card"><h3>Program</h3>
    <p class="sub">Intro video: 10 common questions from people following the program.</p>
-   <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a></div>
+   <a class="btn block sec" href="${INTRO_VIDEO}" target="_blank" rel="noopener">▶ Watch the intro video</a>
+   <button class="btn block sec" id="sGuide">How the workouts work</button></div>
    <div class="card"><h3>Data</h3>
    <div class="sub">Last sync: ${syncState.last ? new Date(syncState.last).toLocaleString() : 'never'}${syncState.err ? `<br><span style="color:var(--bad)">${esc(syncState.err)}</span>` : ''}</div>
    <button class="btn block sec" id="sProg">Reload program from repo</button>
@@ -865,6 +906,7 @@ function vSettings(a) {
   };
   $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Program reloaded'); render(); } catch (e) { toast(e.message); } };
   $('#sExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: D }, null, 1)], { type: 'application/json' })); a.download = `mtb-backup-${todayISO()}.json`; a.click(); };
+  if ($('#sGuide')) $('#sGuide').onclick = () => showGuide(true);
   $('#sReset').onclick = () => { if (confirm('Remove all data stored on this phone? (Data already synced to GitHub stays there.)')) { localStorage.removeItem('mtb.data'); localStorage.removeItem('mtb.shas'); D = {}; shas = {}; toast('Cleared - syncing'); syncNow(); } };
 }
 
@@ -889,6 +931,7 @@ document.addEventListener('click', e => {
   } else if (t.dataset.gview) { setVal(me(), 'settings', 'main', 'gymView', t.dataset.gview); render();
   } else if (t.dataset.ropen) { const j = t.dataset.ropen.lastIndexOf('|'), key = t.dataset.ropen.slice(0, j); (RX[key] = RX[key] || new Set()).add(+t.dataset.ropen.slice(j + 1)); render();
   } else if (t.dataset.sprint) { sprintRun(t);
+  } else if (t.dataset.fill) { quickFill(t);
   } else if (t.dataset.where) {
     const [sid, tr] = t.dataset.where.split('|'); setVal(me(), 'sessions', sid, 'where', tr); render();
   } else if (t.dataset.tstart) { startT(t.dataset.tstart);
