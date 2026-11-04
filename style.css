@@ -130,3 +130,4 @@ textarea[disabled],input[disabled],select[disabled]{opacity:.85;color:var(--txt)
 .set .n.fill small{font-size:11px;font-weight:600;margin-top:2px}
 .guide p{font-size:14px;line-height:1.45;margin:8px 0}.guide .gex{background:var(--card2);border-radius:10px;padding:8px;font-size:13px}.guide .gex span{color:var(--acc2)}
 .tbtns{display:flex;gap:8px}.tbtns .btn{flex:1}
+.mbtns{display:flex;gap:8px;margin-top:14px}.mbtns .btn{flex:1}.mbox p{font-size:14px;line-height:1.45;margin:8px 0;color:var(--txt)}.mbox input{width:100%;box-sizing:border-box;margin-top:6px}

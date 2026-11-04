@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.11.2';
+const APP_VERSION = '2.11.3';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -505,9 +505,9 @@ function restSettingHtml() {
    <div class="sub">Leave blank and the rest timer follows the program: no rest between exercises with the same letter, then the printed rest after each round.</div>
    ${cfg.restOverride ? `<div class="warnbox">Override on: ${cfg.restOverride}s after every set, instead of the program's rest times.</div>` : ''}`;
 }
-function readRestSetting() {   // returns the new override (0 = follow the program); asks before turning an override on or changing it
+async function readRestSetting() {   // returns the new override (0 = follow the program); asks before turning an override on or changing it
   const v = Math.max(0, Math.round(+$('#sRest').value || 0));
-  if (v && v !== cfg.restOverride && !confirm(`Override the program's rest times?\n\nThe rest timer will run ${v}s after every set, including between exercises with the same letter where the program says no rest (0w).\n\nLeave the box blank to follow the program.`)) return cfg.restOverride || 0;
+  if (v && v !== cfg.restOverride && !(await ask(`Override the program's rest times?\n\nThe rest timer will run ${v}s after every set, including between exercises with the same letter where the program says no rest (0w).\n\nLeave the box blank to follow the program.`, { ok: 'Override' }))) return cfg.restOverride || 0;
   return v;
 }
 
@@ -902,7 +902,7 @@ function vSettings(a) {
    <button class="btn block danger" id="sReset">Clear data on this phone</button>
    <p class="sub mt">The Excel tracker updates when the PC runs <b>Sync Tracker.bat</b>. App v${APP_VERSION}</p></div>`;
   $('#sSave').onclick = async () => {
-    cfg = { ...cfg, me: $('#sMe').value, owner: $('#sOwner').value.trim(), repo: $('#sRepo').value.trim(), token: $('#sTok').value.trim(), api: ($('#sApi').value.trim() || 'https://api.github.com'), restOverride: readRestSetting() };
+    cfg = { ...cfg, me: $('#sMe').value, owner: $('#sOwner').value.trim(), repo: $('#sRepo').value.trim(), token: $('#sTok').value.trim(), api: ($('#sApi').value.trim() || 'https://api.github.com'), restOverride: await readRestSetting() };
     LS.set('cfg', cfg);
     if (!configured()) return toast('Fill in all fields');
     if (defTrack(cfg.me) !== $('#sTrack').value || !val(cfg.me, 'settings', 'main', 'defaultTrack')) setVal(cfg.me, 'settings', 'main', 'defaultTrack', $('#sTrack').value);
@@ -912,7 +912,7 @@ function vSettings(a) {
   if ($('#sPush')) $('#sPush').onclick = () => { const k = +$('#sPushW').value; setVal(me(), 'settings', 'main', 'push' + k, pushAt(me(), k) + 1); toast(`Week ${k} onward pushed back a week`); render(); };
   if (a === 'schedule') setTimeout(() => $('#schedCard')?.scrollIntoView({ block: 'start' }), 50);
   if ($('#sGarmin')) $('#sGarmin').onchange = e => setVal(me(), 'settings', 'main', 'garmin', e.target.checked);
-  if ($('#sStravaOff')) $('#sStravaOff').onclick = () => { if (confirm('Disconnect Strava?\n\nThe app will stop adding your workouts to Strava and stop bringing in your rides. Anything already on Strava stays there.\n\nTo remove the app from your Strava account completely, open Strava → Settings → My Apps.')) { setVal(me(), 'settings', 'main', 'stravaDisconnect', Date.now()); stravaKick('disconnect'); render(); } };
+  if ($('#sStravaOff')) $('#sStravaOff').onclick = async () => { if (await ask('Disconnect Strava?\n\nThe app will stop adding your workouts to Strava and stop bringing in your rides. Anything already on Strava stays there.\n\nTo remove the app from your Strava account completely, open Strava → Settings → My Apps.', { ok: 'Disconnect', danger: true })) { setVal(me(), 'settings', 'main', 'stravaDisconnect', Date.now()); stravaKick('disconnect'); render(); } };
   if ($('#sCodeGo')) $('#sCodeGo').onclick = () => {
     let t = $('#sCode').value.trim(); if (!t) return;
     if (t.includes('code=')) { const u = new URLSearchParams(t.slice(t.indexOf('?') + 1)); t = u.get('code') + '|' + (u.get('scope') || ''); }
@@ -921,7 +921,7 @@ function vSettings(a) {
   $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Program reloaded'); render(); } catch (e) { toast(e.message); } };
   $('#sExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: D }, null, 1)], { type: 'application/json' })); a.download = `mtb-backup-${todayISO()}.json`; a.click(); };
   if ($('#sGuide')) $('#sGuide').onclick = () => showGuide(true);
-  $('#sReset').onclick = () => { if (confirm('Remove all data stored on this phone? (Data already synced to GitHub stays there.)')) { localStorage.removeItem('mtb.data'); localStorage.removeItem('mtb.shas'); D = {}; shas = {}; toast('Cleared - syncing'); syncNow(); } };
+  $('#sReset').onclick = async () => { if (await ask('Clear this phone?\n\nThis removes the app\'s data from this phone only. Everything already synced stays saved and comes back on the next sync.', { ok: 'Clear', danger: true })) { localStorage.removeItem('mtb.data'); localStorage.removeItem('mtb.shas'); D = {}; shas = {}; toast('Cleared - syncing'); syncNow(); } };
 }
 
 /* ---------------- events ---------------- */
@@ -953,7 +953,7 @@ document.addEventListener('click', e => {
   } else if (t.dataset.warm !== undefined) {
     setVal(me(), 'settings', 'main', 'warmupMin', +t.dataset.warm); t.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === t));
   } else if (t.dataset.tpause) { pauseT(t.dataset.tpause);
-  } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop && !T.done && (T.phase === 'COOLDOWN' || confirm(endAsk()))) endT(true);
+  } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop && !T.done) { if (T.phase === 'COOLDOWN') endT(true); else ask(endAsk(), { ok: 'End session', cancel: 'Keep going', danger: true }).then(y => { if (y && T && !T.done) endT(true); }); }
   } else if (t.dataset.introdone) {
     setVal(me(), 'settings', 'main', 'introWatched', true); render();
   } else if (t.dataset.finish) {
@@ -980,7 +980,7 @@ document.addEventListener('click', e => {
   } else if (t.dataset.delride) {
     const id = t.dataset.delride;
     if (!rec('shared', 'rides', id)) { rideDraft = null; location.hash = '#rides'; }   // never saved - nothing to delete
-    else if (confirm('Delete this ride?')) { setVal('shared', 'rides', id, 'deleted', true); location.hash = '#rides'; }
+    else ask('Delete this ride?', { ok: 'Delete', danger: true }).then(y => { if (y) { setVal('shared', 'rides', id, 'deleted', true); location.hash = '#rides'; } });
   } else if (t.dataset.rest) {
     if (t.dataset.rest === 'skip') stopRest(); else if (rest) rest.end += 15000;
   } else if (t.dataset.hold !== undefined) {
@@ -1033,6 +1033,23 @@ const vib = p => { try { navigator.vibrate?.(p); } catch { } };
 let wl = null;
 async function wake(on) { try { if (on && 'wakeLock' in navigator) wl = await navigator.wakeLock.request('screen'); else if (!on && wl) { await wl.release(); wl = null; } } catch { } }
 let toastT;
+// In-app dialogs, styled like the app (the browser's own confirm/prompt boxes show the web address, e.g. "lynnmaynes.github.io says").
+// The first paragraph of the message is the title.
+function ask(msg, { ok = 'OK', cancel = 'Cancel', danger = false, input = null } = {}) {
+  return new Promise(res => {
+    const [title, ...rest] = String(msg).split('\n\n');
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="mbox" role="dialog" aria-modal="true"><h3>${esc(title)}</h3>${rest.map(x => `<p>${esc(x).replace(/\n/g, '<br>')}</p>`).join('')}
+      ${input !== null ? `<input id="mIn" placeholder="${esc(input)}" autocomplete="off">` : ''}
+      <div class="mbtns"><button class="btn sec" id="mNo">${esc(cancel)}</button><button class="btn${danger ? ' danger' : ''}" id="mYes">${esc(ok)}</button></div></div>`;
+    const done = v => { m.remove(); res(v); };
+    m.querySelector('#mNo').onclick = () => done(input !== null ? null : false);
+    m.querySelector('#mYes').onclick = () => done(input !== null ? m.querySelector('#mIn').value : true);
+    m.onclick = e => { if (e.target === m) done(input !== null ? null : false); };
+    document.body.appendChild(m); (m.querySelector('#mIn') || m.querySelector('#mYes')).focus();
+  });
+}
+const askText = (msg, placeholder, opts = {}) => ask(msg, { ...opts, input: placeholder || '' });
 function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); }
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
