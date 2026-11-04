@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.11.0';
+const APP_VERSION = '2.11.2';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -157,9 +157,18 @@ const sState = sid => sv().sessions?.[me()]?.[sid] || null;
 const reqPending = sid => { const t = tOf(me(), 'stravaReq', sid, 'action'); return val(me(), 'stravaReq', sid, 'action') && t > (sState(sid)?.reqT || 0); };
 function stravaKick(why) { LS.set('kick', why); scheduleSync(800); }
 function stravaReq(sid, action) { setVal(me(), 'stravaReq', sid, 'action', null); setVal(me(), 'stravaReq', sid, 'action', action); stravaKick(action); }
+const RECHECK_MS = 15 * 60e3;
+let openCheck = true;   // set on app start and whenever the app comes back to the screen
+const waitingRecent = () => Object.values(sv().sessions?.[me()] || {}).some(x => x?.state === 'waiting' && Date.now() - (x.waitingSince || 0) < 7 * 864e5);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') openCheck = true; });
 async function stravaSync() {
   try { const { data } = await ghGetJson('strava/state.json'); if (data) { SV = data; LS.set('strava', SV); } } catch { }
-  const why = LS.get('kick', ''); if (!why) return;
+  let why = LS.get('kick', '');
+  // Garmin uploads land on Strava whenever the watch syncs, and GitHub's hourly schedule isn't reliable - so opening the
+  // app while a recent workout is still waiting asks for a Strava check (at most every 15 minutes).
+  if (!why && openCheck && waitingRecent() && Date.now() - LS.get('recheckAt', 0) > RECHECK_MS) { why = 'recheck'; LS.set('recheckAt', Date.now()); }
+  openCheck = false;
+  if (!why) return;
   try {
     const path = `strava/kick/${me()}.json`; const cur = await gh('GET', path);
     await ghPutJson(path, { t: Date.now(), why }, cur?.sha, `${cap(me())} phone: Strava ${why}`);
@@ -198,7 +207,8 @@ function stravaStatus(sid) {   // the Strava line on a finished session
   else if (st?.state === 'linked') body = `✓ On Strava, added to your Garmin activity <b>${esc(st.name || '')}</b> · ${stravaLink(st.id)}`;
   else if (st?.state === 'posted') body = `✓ Posted to Strava · ${stravaLink(st.id)}`;
   else if (st?.state === 'skipped') body = `<span class="sub">Not on Strava (skipped).</span><div class="mt"><button class="btn small sec" data-spost="${sid}">Post to Strava anyway</button></div>`;
-  else if (usesGarmin() && st?.state === 'waiting') body = `<span class="sub">Waiting for your Garmin to upload this to Strava - it's checked every hour. Only post it yourself if you didn't record it on the watch.</span>` + btns('Post it myself');
+  else if (usesGarmin() && st?.state === 'waiting') body = `<span class="sub">Waiting for your Garmin to upload this to Strava. It's checked when you open the app and every hour. Uploaded already? Tap Check now. Only post it yourself if you didn't record it on the watch.</span>
+    <button class="btn small sec block mt" data-srecheck="${sid}">Check Strava now</button>` + btns('Post it myself');
   else body = `<span class="sub">Not on Strava yet.</span>` + btns();
   return `<div class="card stravabox"><h3>Strava</h3><div class="mt">${body}</div></div>`;
 }
@@ -672,7 +682,7 @@ let T = null;
 function timerBox(box, reps, work) {
   return `<div class="hiitbox" id="${box}"><div class="phase">READY</div><div class="big">${clock(work)}</div>
    <div class="center sub rep">Interval 0 of ${reps}</div>
-   <div class="grid3 mt"><button class="btn" data-tstart="${box}">Start</button><button class="btn sec" data-tpause="${box}">Pause</button><button class="btn sec" data-tstop="${box}">Stop</button></div>
+   <div class="tbtns mt"><button class="btn" data-tstart="${box}">Start</button><button class="btn sec" data-tpause="${box}" hidden>Pause</button><button class="btn sec" data-tstop="${box}" hidden>End</button></div>
    <button class="btn block tskip" data-tskip="${box}" hidden></button></div>`;
 }
 function startT(box) {
@@ -717,6 +727,7 @@ function skipT(box) {   // warm-up: 3-2-1 lead-in to the first interval; cool-do
   if (T.phase === 'WARMUP') { const lead = Date.now() + 3000; if (T.end > lead) T.end = lead; T.lastBeep = -1; tickT(); }
   else if (T.phase === 'COOLDOWN') { T.coolSec = (Date.now() - T.coolStart) / 1000; endT(false); }
 }
+const endAsk = () => `End this HIIT session?\n\n${T.phase === 'WARMUP' ? "You're still warming up." : `You've finished ${T.completed} of ${T.reps} intervals.`} They'll be saved, but the timer can't pick up where it left off. To take a break, tap Pause instead.`;
 function endT(stopped) {
   if (!T || T.done) return; clearInterval(T.iv);
   const now = Date.now(); if (T.paused) T.pausedMs += now - T.pausedAt;
@@ -739,6 +750,9 @@ function paintT() {
   if (sk) { const lead = T.phase === 'WARMUP' && T.end - Date.now() <= 3100; sk.hidden = T.done || !['WARMUP', 'COOLDOWN'].includes(T.phase) || lead;
     sk.textContent = T.phase === 'WARMUP' ? "I'm warm - start intervals ▶" : 'Skip cool-down'; }
   box.querySelector('[data-tpause]').textContent = T.paused ? 'Resume' : 'Pause';
+  // only the buttons that do something: Start before and after a run; Pause/Resume and Stop while it runs
+  const st = box.querySelector('[data-tstart]'); st.hidden = !T.done; st.textContent = 'Start again';
+  box.querySelector('[data-tpause]').hidden = box.querySelector('[data-tstop]').hidden = T.done;
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tickT(); });
 
@@ -939,7 +953,7 @@ document.addEventListener('click', e => {
   } else if (t.dataset.warm !== undefined) {
     setVal(me(), 'settings', 'main', 'warmupMin', +t.dataset.warm); t.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === t));
   } else if (t.dataset.tpause) { pauseT(t.dataset.tpause);
-  } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop) endT(true);
+  } else if (t.dataset.tstop) { if (T && T.box === t.dataset.tstop && !T.done && (T.phase === 'COOLDOWN' || confirm(endAsk()))) endT(true);
   } else if (t.dataset.introdone) {
     setVal(me(), 'settings', 'main', 'introWatched', true); render();
   } else if (t.dataset.finish) {
@@ -954,6 +968,8 @@ document.addEventListener('click', e => {
     const k = +t.dataset.unpush; setVal(me(), 'settings', 'main', 'push' + k, pushAt(me(), k) - 1 || null); render();
   } else if (t.dataset.spost) {
     stravaReq(t.dataset.spost, 'post'); toast('Sending to Strava…'); softRender();
+  } else if (t.dataset.srecheck) {
+    LS.set('recheckAt', Date.now()); stravaKick('recheck'); toast('Checking Strava - give it a minute'); t.disabled = true; t.textContent = 'Checking Strava…';
   } else if (t.dataset.sskip) {
     stravaReq(t.dataset.sskip, 'skip'); softRender();
   } else if (t.dataset.stretch) {

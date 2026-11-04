@@ -1,5 +1,5 @@
 // Service worker: cache the app shell so it opens offline. Data calls to GitHub are never cached.
-const CACHE = 'mtb-shell-v2.11.0';
+const CACHE = 'mtb-shell-v2.11.2';
 const SHELL = ['./', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'icons/rider-icon-192.png', 'icons/rider-icon-512.png', 'icons/rider-apple-touch-180.png', 'icons/favicon-32.png', 'icons/rider.svg'];
 // Only this app's own caches (mtb-shell-*) are removed - the MTB 12 Team pilot on the same site keeps its own.
 // cache:'reload' / 'no-cache' bypass the browser's 10-minute HTTP cache, so a new release shows up on the next open
