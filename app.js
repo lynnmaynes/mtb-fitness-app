@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.11.3';
+const APP_VERSION = '2.11.4';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -445,16 +445,16 @@ function quickFill(btn) {
   autoDate(lid.split('-').slice(0, 2).join('-')); btn.outerHTML = `<div class="n">${esc(btn.firstChild.textContent)}</div>`; vib(20);
 }
 const GUIDE = [
-  ['Letters are rounds', `<p>Exercises with the same letter are done <b>back-to-back</b> as one round: A1 → A2 → A3, no rest between them ("0w" in the book).</p>
-    <p>After the last one, rest the printed time, then go back to A1 for the next round. A single letter (C, E…) is just sets of one exercise.</p>
-    <div class="gex"><b>A1</b> Split squat → <b>A2</b> Press up → <span>rest 1m 30s</span> → round 2…</div>`],
-  ['The rest timer does it for you', `<p>Tap <b>✓</b> after each exercise. After a 0w exercise there's no timer, just a note naming the next one. After the last one in a round, the rest timer starts with the program's time.</p>
-    <p><b>At the gym</b>, if equipment isn't free or close together, switch to <b>By exercise</b>: all sets of one exercise, resting the printed time between sets.</p>`],
-  ['Logging is quick', `<p>Tap the <b>row label</b> with ↺ (A1, A2… or the set number) to fill in your numbers from last time, or the program's target the first time. Change only what's different, then tap ✓.</p>
+  ['Letters are rounds', `<p>Letters are rounds and the number is the exercise in that round.</p>
+    <p>Exercises with the same letter are done <b>back-to-back</b> as one round: A1 → A2 → A3, no rest between them ("0w" or 0 wait).</p>
+    <p>After the last one, rest the printed time, then start round 2: A1 → A2 → A3 for the second round of sets.</p>
+    <div class="gex"><b>Example:</b> <b>A1</b> Split squat → <b>A2</b> Press up → <span>rest 1m 30s</span> → Round 2… <b>A1</b> Split squat → <b>A2</b> Press up → <span>rest 1m 30s</span>…</div>`],
+  ['The rest timer', `<p>Tap <b>✓</b> after each exercise. After a 0w exercise there's no timer, just a note naming the next one. After the last one in a round, the rest timer starts with the program's time.</p>
+    <p><b>At the gym</b>, if equipment isn't free or close together, a circuit of exercises is difficult to put together. If so, switch to <b>By exercise</b>, where all sets of one exercise are done together (i.e. all sets in A1, then A2, etc.). Rest the printed time between sets.</p>`],
+  ['Logging is quick', `<p>Tap the <b>row label</b> with ↺ (A1, A2… or the set number) to fill in your numbers from your last time, or the program's target the first time. Change only what's different, then tap ✓.</p>
     <p>Exercises in seconds have a ⏱ timer, circuits have a ▶ sprint button, and <b>Finish workout</b> at the bottom wraps it up.</p>`]];
-function showGuide(force) {
-  if (!force && LS.get('guideSeen', false)) return false;
-  LS.set('guideSeen', true); let i = 0;
+function showGuide() {   // opened from ⚙ → Program → How the workouts work
+  let i = 0;
   const m = document.createElement('div'); m.className = 'modal';
   const paint = () => { m.innerHTML = `<div class="mbox guide"><div class="sub">How the workouts work · ${i + 1} of ${GUIDE.length}</div><h3>${GUIDE[i][0]}</h3>${GUIDE[i][1]}
     <div class="row mt">${i ? '<button class="btn sec small" id="gBack">Back</button>' : ''}<div class="grow"></div><button class="btn small" id="gNext">${i < GUIDE.length - 1 ? 'Next' : 'Got it'}</button></div></div>`;
@@ -616,7 +616,7 @@ function vSession(id) {
     <div><label class="f">My RPE (1-10)</label>${selectHtml(`${me()}|sessions|${id}|rpe`, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], val(me(), 'sessions', id, 'rpe'))}</div></div>
     <label class="f">Session notes (shared)</label><textarea data-f="shared|sessions|${id}|notes">${esc(val('shared', 'sessions', id, 'notes') || '')}</textarea>
     <button class="btn block" data-finish="${id}">Finish workout ✓</button></div>${stravaStatus(id)}`;
-  view().innerHTML = html; paintT(); if (!showGuide()) restOverrideWarn();
+  view().innerHTML = html; paintT(); restOverrideWarn();
 }
 function markSet(coll, lid) { const b = document.querySelector(`[data-done="${coll}|${lid}"]`); if (b) b.classList.add('on'); const i = document.querySelector(`[data-f="${me()}|${coll}|${lid}|secs"]`); if (i) i.value = val(me(), coll, lid, 'secs') ?? ''; }
 function selectHtml(key, opts, cur, ph) {
@@ -920,7 +920,7 @@ function vSettings(a) {
   };
   $('#sProg').onclick = async () => { try { await loadProgram(); prep(); toast('Program reloaded'); render(); } catch (e) { toast(e.message); } };
   $('#sExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: D }, null, 1)], { type: 'application/json' })); a.download = `mtb-backup-${todayISO()}.json`; a.click(); };
-  if ($('#sGuide')) $('#sGuide').onclick = () => showGuide(true);
+  if ($('#sGuide')) $('#sGuide').onclick = () => showGuide();
   $('#sReset').onclick = async () => { if (await ask('Clear this phone?\n\nThis removes the app\'s data from this phone only. Everything already synced stays saved and comes back on the next sync.', { ok: 'Clear', danger: true })) { localStorage.removeItem('mtb.data'); localStorage.removeItem('mtb.shas'); D = {}; shas = {}; toast('Cleared - syncing'); syncNow(); } };
 }
 
