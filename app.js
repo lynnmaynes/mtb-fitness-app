@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.11.4';
+const APP_VERSION = '2.11.5';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -386,17 +386,18 @@ function exHead(s, pl, pe, mode, gym, inRound) {
 function setRow(s, pe, n, t, pt, ptSame, label) {
   const gym = t === 'Gym', coll = COLL(t), secs = pe.target_type === 'seconds';
   const lid = setId(s, pe, n, t); const k = `${me()}|${coll}|${lid}`; const r = rec(me(), coll, lid) || {};
-  const num = (f, ph) => `<input inputmode="${f === 'weight' ? 'decimal' : 'numeric'}" placeholder="${ph}" data-f="${k}|${f}" data-num value="${esc(r[f] ?? '')}">`;
+  const num = (f, ph) => `<input inputmode="${f === 'weight' || f === 'band' ? 'decimal' : 'numeric'}" placeholder="${ph}" data-f="${k}|${f}" data-num value="${esc(r[f] ?? '')}">`;
   let inputs;
   if (pe.sprint) inputs = `<button class="timerbtn sprintbtn" data-sprint="${coll}|${lid}|${pe.target_max}">▶ ${pe.target_max}s sprint</button>${num('secs', 'secs')}`;
   else if (gym) inputs = secs ? `<div class="span2">${num('secs', 'secs')}</div>` : num('weight', 'lb') + num('reps', 'reps');
-  else inputs = num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps') + selectHtml(`${k}|band`, P.band_options, r.band, 'band');
+  else if (usesBand(pe)) inputs = num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps') + `<label class="unitbox">${num('band', 'band')}<span>lb</span></label>`;   // total band resistance, e.g. 20 + 30 stacked = 50
+  else inputs = `<div class="span2">${num(secs ? 'secs' : 'reps', secs ? 'secs' : 'reps')}</div>`;
   const canFill = rowEmpty(r) && !r.done && fillFor(s, pe, n, t);
   let h = `<div class="set">${canFill ? `<button class="n fill" data-fill="${coll}|${lid}" title="Fill from last time">${label}<small>↺</small></button>` : `<div class="n">${label}</div>`}${inputs}<button class="done ${r.done ? 'on' : ''}" data-done="${coll}|${lid}">✓</button>`;
   if (ptSame) {
     const q = rec(pt, coll, lid);
     if (q && (q.reps != null || q.secs != null || q.done || q.band || q.weight != null))
-      h += `<div class="partner ${pt}">${esc(PN(pt))}: ${q.weight != null ? q.weight + ' lb × ' : ''}${q.reps ?? (q.secs != null ? q.secs + 's' : '–')}${q.band ? ' · ' + esc(q.band) : ''}${q.done ? ' ✓' : ''}</div>`;
+      h += `<div class="partner ${pt}">${esc(PN(pt))}: ${q.weight != null ? q.weight + ' lb × ' : ''}${q.reps ?? (q.secs != null ? q.secs + 's' : '–')}${q.band != null && q.band !== '' ? ' · ' + esc(bandTxt(q.band)) : ''}${q.done ? ' ✓' : ''}</div>`;
   }
   return h + `</div>`;
 }
@@ -424,11 +425,14 @@ function roundsCard(s, t, pl, g, pt, ptSame) {
   return h + `</div>`;
 }
 // Quick fill: last time this exercise was logged on this track (same set number if there), else the program's target
+// Home band exercises record the total band resistance in lb (stack bands and add them up); other home moves have no band field
+const usesBand = pe => exById(pe.exercise_id)?.equipment === 'Resistance band';
+const bandTxt = b => typeof b === 'number' ? `${b} lb band` : String(b);
 function fillFor(s, pe, n, t) {
   if (pe.sprint) return null;
   const coll = COLL(t), gym = t === 'Gym', idx = P.sessions.indexOf(s);
   const pick = r => gym ? (r.secs != null && r.weight == null ? { secs: r.secs } : { weight: r.weight ?? null, reps: r.reps ?? null })
-                        : { [r.secs != null ? 'secs' : 'reps']: r.secs ?? r.reps ?? null, band: r.band ?? null };
+                        : { [r.secs != null ? 'secs' : 'reps']: r.secs ?? r.reps ?? null, band: usesBand(pe) && typeof r.band === 'number' ? r.band : null };
   for (let i = idx - 1; i >= 0; i--) {
     const s2 = P.sessions[i]; if (!isStr(s2)) continue;
     const recs = setsFor(s2, t).filter(x => x.pe.exercise_id === pe.exercise_id).map(x => [x.n, rec(me(), coll, x.id)])
