@@ -4,7 +4,7 @@
  * merge field-by-field: newest edit wins, nothing else is overwritten.
  */
 'use strict';
-const APP_VERSION = '2.11.5';
+const APP_VERSION = '2.11.6';
 const STRAVA_CLIENT_ID = '292465';
 const INTRO_VIDEO = 'https://www.youtube.com/watch?v=lclyYasr43Y';
 function introCard(full) {   // the booklet asks every new starter to watch this first
@@ -38,12 +38,13 @@ const file = k => (D[k] ||= {});
 const rec = (f, coll, key) => D[f]?.[coll]?.[key];
 const val = (f, coll, key, field) => rec(f, coll, key)?.[field];
 
+let EDITS = 0;   // counts local edits, so a sync can tell whether something changed while it was running
 function setVal(f, coll, key, field, value) {
   if (value === '' || value === undefined) value = null;
   const F = file(f); const C = (F[coll] ||= {}); const R = (C[key] ||= { _t: {} });
   R._t ||= {};
   if (JSON.stringify(R[field] ?? null) === JSON.stringify(value)) return;
-  R[field] = value; R._t[field] = Date.now();
+  R[field] = value; R._t[field] = Date.now(); EDITS++;
   LS.set('data', D); syncState.dirty = true; LS.set('dirty', true); paintSync(); scheduleSync();
 }
 
@@ -119,19 +120,20 @@ async function syncNow(manual) {
   if (syncState.busy) return;
   if (!navigator.onLine) { syncState.err = 'Offline - will sync when back online'; paintSync(); return; }
   syncState.busy = true; syncState.err = ''; paintSync();
-  const before = stable(D);
+  const before = stable(D), e0 = EDITS;
   try {
     if (!P || (P.version || 1) < PROGRAM_VERSION) await loadProgram();
     await syncFile(me(), true);
     await syncFile('shared', true);
     if (partner()) await syncFile(partner(), false);
-    await stravaSync();
+    await stravaSync(EDITS === e0);   // a Strava request waits until the edits it depends on (e.g. Finish -> Done) are saved
     LS.set('data', D); LS.set('shas', shas);
     syncState.last = Date.now(); LS.set('lastSync', syncState.last);
-    syncState.dirty = false; LS.set('dirty', false);
+    if (EDITS === e0) { syncState.dirty = false; LS.set('dirty', false); }
     if (manual) toast('Synced');
   } catch (e) { syncState.err = e.message; if (manual) toast(e.message); }
   syncState.busy = false; paintSync();
+  if (EDITS !== e0) scheduleSync(500);   // something changed mid-sync: send it (and any Strava request) straight away
   if (stable(D) !== before) softRender();
 }
 async function loadProgram() {
@@ -159,13 +161,18 @@ function stravaKick(why) { LS.set('kick', why); scheduleSync(800); }
 function stravaReq(sid, action) { setVal(me(), 'stravaReq', sid, 'action', null); setVal(me(), 'stravaReq', sid, 'action', action); stravaKick(action); }
 const RECHECK_MS = 15 * 60e3;
 let openCheck = true;   // set on app start and whenever the app comes back to the screen
-const waitingRecent = () => Object.values(sv().sessions?.[me()] || {}).some(x => x?.state === 'waiting' && Date.now() - (x.waitingSince || 0) < 7 * 864e5);
+const waitingRecent = () => {   // a recent workout still waiting for its Garmin upload, or finished but not yet seen by the Strava check
+  const ss = sv().sessions?.[me()] || {}, now = Date.now();
+  if (Object.values(ss).some(x => x?.state === 'waiting' && now - (x.waitingSince || 0) < 7 * 864e5)) return true;
+  return !!stravaAthlete() && Object.entries(D[me()]?.sessions || {}).some(([sid, r]) => ['Done', 'Partial'].includes(r?.status) && r.dateDone && !ss[sid] && now - parseISO(r.dateDone) < 3 * 864e5);
+};
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') openCheck = true; });
-async function stravaSync() {
+async function stravaSync(fresh = true) {
   try { const { data } = await ghGetJson('strava/state.json'); if (data) { SV = data; LS.set('strava', SV); } } catch { }
   let why = LS.get('kick', '');
   // Garmin uploads land on Strava whenever the watch syncs, and GitHub's hourly schedule isn't reliable - so opening the
   // app while a recent workout is still waiting asks for a Strava check (at most every 15 minutes).
+  if (!fresh) return;
   if (!why && openCheck && waitingRecent() && Date.now() - LS.get('recheckAt', 0) > RECHECK_MS) { why = 'recheck'; LS.set('recheckAt', Date.now()); }
   openCheck = false;
   if (!why) return;
@@ -209,6 +216,7 @@ function stravaStatus(sid) {   // the Strava line on a finished session
   else if (st?.state === 'skipped') body = `<span class="sub">Not on Strava (skipped).</span><div class="mt"><button class="btn small sec" data-spost="${sid}">Post to Strava anyway</button></div>`;
   else if (usesGarmin() && st?.state === 'waiting') body = `<span class="sub">Waiting for your Garmin to upload this to Strava. It's checked when you open the app and every hour. Uploaded already? Tap Check now. Only post it yourself if you didn't record it on the watch.</span>
     <button class="btn small sec block mt" data-srecheck="${sid}">Check Strava now</button>` + btns('Post it myself');
+  else if (usesGarmin() && !st) body = `<span class="sub">Looking for your Garmin activity on Strava…</span><button class="btn small sec block mt" data-srecheck="${sid}">Check Strava now</button>` + btns('Post it myself');
   else body = `<span class="sub">Not on Strava yet.</span>` + btns();
   return `<div class="card stravabox"><h3>Strava</h3><div class="mt">${body}</div></div>`;
 }
